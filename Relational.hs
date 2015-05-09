@@ -1,6 +1,6 @@
 {-|
-Module      : 
-Description : 
+Module      : Relational
+Description : Attempt at a Haskell<->Relational interface
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
@@ -22,6 +22,8 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+
+module Relational where
 
 import GHC.TypeLits
 import GHC.Exts (Constraint)
@@ -106,20 +108,6 @@ appendHList left right = case left of
         EmptyHList -> left
         ConsHList _ _ -> ConsHList x (appendHList rest right)
 
-{-
-data UniqueSymbols :: [Symbol] -> * where
-  NilSymbols :: UniqueSymbols '[]
-  ConsSymbols :: (NewElement s ss ~ 'True) => Proxy s -> UniqueSymbols ss -> UniqueSymbols (s ': ss)
-
-example1 = ConsSymbols (Proxy :: Proxy "Alex") NilSymbols
-
-example2 = ConsSymbols (Proxy :: Proxy "Vieth") example1
-
-example3 = ConsSymbols (Proxy :: Proxy "AlexVieth") example2
--}
-
---example4 = ConsSymbols (Proxy :: Proxy "Vieth") example3
-
 -- | A Column is a string identifier (Symbol) and an identifier of some type.
 data Column :: Symbol -> * -> * where
   Column :: KnownSymbol sym => Proxy sym -> Proxy u -> Column sym u
@@ -145,9 +133,6 @@ column5 = Column (Proxy :: Proxy "test1") (Proxy :: Proxy Char)
 column6 :: Column "test2" (Maybe Int)
 column6 = Column (Proxy :: Proxy "test2") (Proxy :: Proxy (Maybe Int))
 
---data Schema :: [Symbol] -> [k] -> * where
---  EmptySchema :: Schema '[] '[]
---  ConsSchema :: (NewElement sym syms ~ 'True) => Column sym u -> Schema syms us -> Schema (sym ': syms) (u ': us)
 data Schema :: [(Symbol, *)] -> * where
   EmptySchema :: Schema '[]
   ConsSchema :: (NewElement sym (Fsts lst) ~ 'True) => Column sym u -> Schema lst -> Schema ('(sym, u) ': lst)
@@ -238,8 +223,6 @@ data QueryOnTable :: [(Symbol, *)] -> [(Symbol, *)] -> [(Symbol, *)] -> * where
 
 queryOnTable1 = QueryOnTable query1 table1
 
--- NOTE we cannot do this in general!!! The select and constraints must be
--- against Universe!
 makeQuery :: QueryOnTable selected conditioned available -> String
 makeQuery (QueryOnTable (Query select constrain) table) = 
     concat
