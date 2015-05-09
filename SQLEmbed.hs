@@ -18,13 +18,21 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 import GHC.TypeLits
 import GHC.Exts (Constraint)
 import Data.Proxy
 import Data.List (intersperse)
+import Data.String (fromString)
 import qualified Database.PostgreSQL.Simple as P
+import qualified Database.PostgreSQL.Simple.Types as PT
 import qualified Database.PostgreSQL.Simple.ToField as PTF
+import qualified Database.PostgreSQL.Simple.FromField as PFF
+import Unsafe.Coerce
 
 type family NewElement (s :: k) (ss :: [k]) :: Bool where
   NewElement s '[] = 'True
@@ -87,6 +95,17 @@ type family Every (c :: k -> Constraint) (xs :: [k]) :: Constraint where
   Every c '[] = ()
   Every c (x ': xs) = (c x, Every c xs)
 
+data HList :: [*] -> * where
+  EmptyHList :: HList '[]
+  ConsHList :: t -> HList ts -> HList (t ': ts)
+
+appendHList :: HList xs -> HList ys -> HList (Append xs ys)
+appendHList left right = case left of
+    EmptyHList -> right
+    ConsHList x rest -> case right of
+        EmptyHList -> left
+        ConsHList _ _ -> ConsHList x (appendHList rest right)
+
 {-
 data UniqueSymbols :: [Symbol] -> * where
   NilSymbols :: UniqueSymbols '[]
@@ -101,50 +120,24 @@ example3 = ConsSymbols (Proxy :: Proxy "AlexVieth") example2
 
 --example4 = ConsSymbols (Proxy :: Proxy "Vieth") example3
 
-data Universe :: * where
-  UText :: Universe
-  UInt :: Universe
-  UBool :: Universe
-  UNull :: Universe
-
-{-
-type family Concrete (u :: Universe) :: * where
-  Concrete UText = String
-  Concrete UInt = Int
-  Concrete UBool = Bool
--}
-
-data Concretion :: Universe -> * where
-  CText :: String -> Concretion UText
-  CInt :: Int -> Concretion UInt
-  CBool :: Bool -> Concretion UBool
-  CNull :: () -> Concretion UNull
-
-showConcretion :: Concretion u -> String
-showConcretion c = case c of
-    CText str -> str
-    CInt i -> show i
-    CBool b -> show b
-    CNull _ -> "NULL"
-
 -- | A Column is a string identifier (Symbol) and an identifier of some type.
-data Column :: Symbol -> k -> * where
+data Column :: Symbol -> * -> * where
   Column :: KnownSymbol sym => Proxy sym -> Proxy u -> Column sym u
 
 columnName :: Column sym t -> String
 columnName (Column symbol _) = symbolVal symbol
 
-column1 :: Column "id" UInt
-column1 = Column (Proxy :: Proxy "id") (Proxy :: Proxy UInt)
+column1 :: Column "id" Int
+column1 = Column (Proxy :: Proxy "id") (Proxy :: Proxy Int)
 
-column2 :: Column "name" UText
-column2 = Column (Proxy :: Proxy "name") (Proxy :: Proxy UText)
+column2 :: Column "name" String
+column2 = Column (Proxy :: Proxy "name") (Proxy :: Proxy String)
 
-column3 :: Column "value" UBool
-column3 = Column (Proxy :: Proxy "value") (Proxy :: Proxy UBool)
+column3 :: Column "value" Bool
+column3 = Column (Proxy :: Proxy "value") (Proxy :: Proxy Bool)
 
-column4 :: Column "id" UText
-column4 = Column (Proxy :: Proxy "id") (Proxy :: Proxy UText)
+column4 :: Column "id" String
+column4 = Column (Proxy :: Proxy "id") (Proxy :: Proxy String)
 
 column5 :: Column "test1" Char
 column5 = Column (Proxy :: Proxy "test1") (Proxy :: Proxy Char)
@@ -155,7 +148,7 @@ column6 = Column (Proxy :: Proxy "test2") (Proxy :: Proxy (Maybe Int))
 --data Schema :: [Symbol] -> [k] -> * where
 --  EmptySchema :: Schema '[] '[]
 --  ConsSchema :: (NewElement sym syms ~ 'True) => Column sym u -> Schema syms us -> Schema (sym ': syms) (u ': us)
-data Schema :: [(Symbol, k)] -> * where
+data Schema :: [(Symbol, *)] -> * where
   EmptySchema :: Schema '[]
   ConsSchema :: (NewElement sym (Fsts lst) ~ 'True) => Column sym u -> Schema lst -> Schema ('(sym, u) ': lst)
 
@@ -167,12 +160,10 @@ schema2 = ConsSchema column3 schema1
 
 schema4 = ConsSchema column1 (ConsSchema column3 EmptySchema)
 
-type family Value (t :: k) :: *
-type instance Value UText = String
-type instance Value UInt = Int
-type instance Value UBool = Bool
+data Value :: * -> * where
+  Value :: t -> Value t
 
-data Condition :: [(Symbol, k)] -> * where
+data Condition :: [(Symbol, *)] -> * where
   EmptyCondition :: Condition '[]
   EqCondition :: Column sym t -> Value t -> Condition '[ '(sym, t) ]
   AndCondition :: Condition cs -> Condition cs' -> Condition (Append cs cs')
@@ -181,20 +172,34 @@ data Condition :: [(Symbol, k)] -> * where
   --   will be exactly the number of parameter substitutions required to do
   --   a DB query.
 
-constraint1 = EqCondition column1 1
+conditionValues :: Condition cs -> HList (Snds cs)
+conditionValues cdn = case cdn of
+    EmptyCondition -> EmptyHList
+    EqCondition col (Value x) -> ConsHList x EmptyHList
+    -- I cannot figure out how to convince GHC that
+    --
+    --   cs ~ Append cs1 cs2
+    --   ______________________________________
+    --   Snds cs ~ Append (Snds cs1) (Snds cs2)
+    --
+    -- So instead I use unsafeCoerce.
+    AndCondition left right -> unsafeCoerce $ appendHList (conditionValues left) (conditionValues right)
+    OrCondition left right -> unsafeCoerce $ appendHList (conditionValues left) (conditionValues right)
 
-constraint2 = EqCondition column2 "Foobar"
+constraint1 = EqCondition column1 (Value 1)
 
-constraint3 = EqCondition column3 False
+constraint2 = EqCondition column2 (Value "Foobar")
 
-constraint4 = EqCondition column1 2
+constraint3 = EqCondition column3 (Value False)
+
+constraint4 = EqCondition column1 (Value 2)
 
 constraint5 = AndCondition constraint1 (AndCondition constraint2 constraint4)
 
 constraint6 = AndCondition constraint1 constraint2
 
 -- | A Select is like a schema, but there can be duplicate columns.
-data Select :: [(Symbol, k)] -> * where
+data Select :: [(Symbol, *)] -> * where
   EmptySelect :: Select '[]
   ConsSelect :: Column sym u -> Select lst -> Select ('(sym, u) ': lst)
 
@@ -203,13 +208,13 @@ select1 = ConsSelect column2 EmptySelect
 select2 = ConsSelect column1 select1
 
 -- | A Query is a Select and a Condition.
-data Query :: [(Symbol, k)] -> [(Symbol, k)] -> * where
+data Query :: [(Symbol, *)] -> [(Symbol, *)] -> * where
   Query :: Select ss -> Condition cs -> Query ss cs
 
 query1 = Query select1 constraint6
 
 -- | A name (Symbol) and a schema give a Table.
-data Table :: Symbol -> [(Symbol, k)] -> * where
+data Table :: Symbol -> [(Symbol, *)] -> * where
   Table :: KnownSymbol sym => Proxy sym -> Schema xs -> Table sym xs
 
 tableName :: Table sym t -> String
@@ -218,20 +223,24 @@ tableName (Table symbol _) = symbolVal symbol
 table1 = Table (Proxy :: Proxy "stuff") schema1
 
 -- | A Query and a Table are enough information to produce a SELECT.
-data QueryOnTable :: [(Symbol, k)] -> [(Symbol, k)] -> * where
+--     QueryOnTable
+--       selected -- description of selected columns
+--       constrained -- description of constrained columns
+--       available -- description of columns available for selection
+data QueryOnTable :: [(Symbol, *)] -> [(Symbol, *)] -> [(Symbol, *)] -> * where
   QueryOnTable
     :: ( Subset ss xs ~ 'True
        , Subset cs xs ~ 'True
        )
     => Query ss cs
     -> Table sym xs
-    -> QueryOnTable ss xs
+    -> QueryOnTable ss cs xs
 
 queryOnTable1 = QueryOnTable query1 table1
 
 -- NOTE we cannot do this in general!!! The select and constraints must be
 -- against Universe!
-makeQuery :: QueryOnTable selected available -> String
+makeQuery :: QueryOnTable selected conditioned available -> String
 makeQuery (QueryOnTable (Query select constrain) table) = 
     concat
     [ "SELECT "
@@ -247,6 +256,7 @@ makeQuery (QueryOnTable (Query select constrain) table) =
 
 makeQuerySelectClause :: Select ss -> String
 makeQuerySelectClause sel = concat ["(", makeSelectFields sel, ")"]
+
   where
 
     makeSelectFields :: Select ss -> String
@@ -267,50 +277,109 @@ makeQueryConditionClause constr = case constr of
   AndCondition left right -> concat [makeQueryConditionClause left, " AND ", makeQueryConditionClause right]
   OrCondition left right -> concat [makeQueryConditionClause left, " OR ", makeQueryConditionClause right]
 
+-- | We are interested in  Injection Universe s  constraints.
+class Injection t s where
+  inject :: s -> t
 
--- We are able to make a SELECT clause with lots of static guarantees; cool.
--- Next up, we need to produce parameters for the WHERE clause.
--- Since we're targeting postgresql-simple, we shall demand that every Value t
--- in the constraint can be made into a ToField instance.
--- No I think it will be easier if we just demand that every Value can be
--- injected into some fixed type like Universe, and then define ToField on
--- Universe via ToField on underlying types like Int and Text. I say it's
--- easier because then we can just make a [Universe] as the q parameter for
--- the query function.
-
-data Semantics :: [k] -> [l] -> * where
-  EmptySemantics :: Semantics '[] '[]
-  ConsSemantics :: (NewElement k ks ~ 'True) => (Value k -> Value l) -> Semantics ks ls -> Semantics (k ': ks) (l ': ls)
-  -- ^ Constraint ensures each domain has at most one function associated with it.
-
-data HList :: [*] -> * where
-  EmptyHList :: HList '[]
-  ConsHList :: t -> HList ts -> HList (t ': ts)
-
-applySemantics :: Semantics domains codomains -> HList domains -> HList codomains
-applySemantics = undefined
-
-uniformity
-  :: ( Every ((~) Bool) codomains
+injects
+  :: ( Every (Injection t) types
      )
-  => Semantics domains codomains
-  -> ()
-uniformity _ = ()
+  => Proxy t
+  -> HList types
+  -> [t]
+injects proxy lst = case lst of
+    EmptyHList -> []
+    ConsHList x rest -> inject x : injects proxy rest
 
-ex1 = uniformity EmptySemantics
+makeParametersFromQuery
+  :: forall t conditions selects .
+     ( Every (Injection t) (Snds conditions)
+     )
+  => Query selects conditions
+  -> [t]
+makeParametersFromQuery q = case q of
+    Query _ cs -> injects (Proxy :: Proxy t) lst
+      where
+        lst :: HList (Snds conditions)
+        lst = conditionValues cs
 
---ex2 = uniformity (ConsSemantics (\x -> not x) EmptySemantics)
+makeParameters
+  :: ( Every (Injection t) (Snds conditioned)
+     )
+  => QueryOnTable selected conditioned available
+  -> [t]
+makeParameters q = case q of
+    QueryOnTable q _ -> makeParametersFromQuery q
 
---
--- Also note, we'll need to deal with the row type as well. Should that be
--- part of the QueryOnTable?
+data Universe where
+    UText :: String -> Universe
+    -- TODO use Text.
+    UInt :: Int -> Universe
+    UDouble :: Double -> Universe
+    UBool :: Bool -> Universe
+    UNull :: Universe
+  deriving Show
 
---makeParameters :: QueryOnTable selected available -> 
+instance Injection Universe String where
+  inject = UText
 
--- What if we have a list of functions, for each (_, t) in that list, which map
--- something of type t to something of type s?
--- Before even that, we need a way to have a type depend upon a kind; we need
--- to get something of type "the column's second parameter".
--- I suppose we could use the Value family for now... It just means that
--- every domain-specific universe has to define these.
+instance Injection Universe Int where
+  inject = UInt
 
+instance Injection Universe Double where
+  inject = UDouble
+
+instance Injection Universe Bool where
+  inject = UBool
+
+instance Injection Universe a => Injection Universe (Maybe a) where
+  inject mebe = case mebe of
+      Nothing -> UNull
+      Just x -> inject x
+
+instance PTF.ToField Universe where
+  toField u = case u of
+      UText str -> PTF.toField str
+      UInt i -> PTF.toField i
+      UDouble d -> PTF.toField d
+      UBool b -> PTF.toField b
+      UNull -> PTF.toField PT.Null
+
+-- Now we have sorted out the query and its parameters, and we must turn our
+-- attention to the return value! Where is that specified? Surely as part of
+-- the QueryOnTable.
+-- Hm, no, can we not just give back lists corresponding to the selected
+-- columns? Yeah, that's the right solution.
+
+data Single t = Single t
+
+type family RowTuple (xs :: [*]) :: * where
+  RowTuple '[] = ()
+  RowTuple '[a] = Single a
+  RowTuple '[a,b] = (a,b)
+  RowTuple '[a,b,c] = (a,b,c)
+  RowTuple '[a,b,c,d] = (a,b,c,d)
+  RowTuple '[a,b,c,d,e] = (a,b,c,d,e)
+  RowTuple '[a,b,c,d,e,f] = (a,b,c,d,e,f)
+  RowTuple '[a,b,c,d,e,f,g] = (a,b,c,d,e,f,g)
+  RowTuple '[a,b,c,d,e,f,g,h] = (a,b,c,d,e,f,g,h)
+  RowTuple '[a,b,c,d,e,f,g,h,i] = (a,b,c,d,e,f,g,h,i)
+  RowTuple '[a,b,c,d,e,f,g,h,i,j] = (a,b,c,d,e,f,g,h,i,j)
+
+postgresQuery
+  :: forall t conditioned selected available r .
+     ( Every (Injection t) (Snds conditioned)
+     , Every (PFF.FromField) (Snds selected)
+     , PTF.ToField t
+     , P.FromRow (RowTuple (Snds selected))
+     )
+  => P.Connection
+  -> Proxy t
+  -> QueryOnTable selected conditioned available
+  -> IO [RowTuple (Snds selected)]
+postgresQuery conn proxy q =
+    let actualQuery :: P.Query
+        actualQuery = fromString (makeQuery q)
+        parameters :: [t]
+        parameters = makeParameters q
+    in  P.query conn actualQuery parameters
