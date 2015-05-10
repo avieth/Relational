@@ -27,6 +27,10 @@ module Data.Relational.PostgreSQL (
 
     PostgresUniverse(..)
   , postgresSelect
+  , postgresInsert
+  , postgresDelete
+  , postgresUpdate
+  , makeUpdateStatement
 
   ) where
 
@@ -36,10 +40,77 @@ import Data.String (fromString)
 import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.Types as PT
 import qualified Database.PostgreSQL.Simple.ToField as PTF
+import qualified Database.PostgreSQL.Simple.ToRow as PTR
 import qualified Database.PostgreSQL.Simple.FromField as PFF
 import qualified Database.PostgreSQL.Simple.FromRow as PFR
 import qualified Data.Text as T
+import Data.Int (Int64)
 import Data.Relational
+
+makeInsertStatement :: Insert universe sym schema -> String
+makeInsertStatement insert =
+    concat
+    [ "INSERT INTO "
+    , tableName table
+    , " ("
+    , columns schema
+    , ") VALUES ("
+    , valuePlaceholders schema
+    , ")"
+    ]
+
+  where
+
+    table = insertTable insert
+
+    schema = tableSchema table
+
+    columns = concat . intersperse "," . makeInsertColumns
+
+    valuePlaceholders = concat . intersperse "," . makeSchemaFields
+
+    makeInsertColumns :: Schema ss -> [String]
+    makeInsertColumns sch = case sch of
+        EmptySchema -> []
+        ConsSchema col rest -> columnName col : makeInsertColumns rest
+
+    makeSchemaFields :: Schema ss -> [String]
+    makeSchemaFields sch = case sch of
+        EmptySchema -> []
+        ConsSchema _ rest -> "?" : makeSchemaFields rest
+
+makeDeleteStatement :: Delete universe sym schema conditioned -> String
+makeDeleteStatement (Delete proxy table condition) =
+    concat
+    [ "DELETE FROM "
+    , tableName table
+    , " WHERE "
+    , conditionClause
+    ]
+  where
+    conditionClause = makeQueryConditionClause condition
+
+makeUpdateStatement :: Update universe sym schema projected conditioned -> String
+makeUpdateStatement update =
+    concat
+    [ "UPDATE "
+    , tableName table
+    , " SET "
+    , assignments (updateProject update)
+    , " WHERE "
+    , makeQueryConditionClause (updateCondition update)
+    ]
+
+  where
+
+    table = updateTable update
+
+    assignments = concat . intersperse "," . makeAssignments
+
+    makeAssignments :: Project ps -> [String]
+    makeAssignments prj = case prj of
+        EmptyProject -> []
+        ConsProject col rest -> (concat [columnName col, " = ?"]) : (makeAssignments rest)
 
 makeQuery :: QueryOnTable selected conditioned available -> String
 makeQuery (QueryOnTable (Query select constrain) table) = 
@@ -132,6 +203,9 @@ instance PTF.ToField PostgresUniverse where
 instance (PFF.FromField a) => PFR.FromRow (Only a) where
   fromRow = fmap Only PFR.field
 
+instance (PTF.ToField a) => PTR.ToRow (Only a) where
+    toRow (Only v) = [PTF.toField v]
+
 injects
   :: ( Every (InUniverse u) types
      )
@@ -148,11 +222,7 @@ makeParametersFromQuery
      )
   => Query selects conditions
   -> [u]
-makeParametersFromQuery q = case q of
-    Query _ cs -> injects (Proxy :: Proxy u) lst
-      where
-        lst :: HList (Snds conditions)
-        lst = conditionValues cs
+makeParametersFromQuery (Query _ cs) = makeParametersFromCondition cs
 
 makeParameters
   :: ( Every (InUniverse u) (Snds conditioned)
@@ -161,6 +231,17 @@ makeParameters
   -> [u]
 makeParameters q = case q of
     QueryOnTable q _ -> makeParametersFromQuery q
+
+makeParametersFromCondition
+  :: forall universe conditions .
+     ( Every (InUniverse universe) (Snds conditions)
+     )
+  => Condition conditions
+  -> [universe]
+makeParametersFromCondition cs = injects (Proxy :: Proxy universe) lst
+  where
+    lst :: HList (Snds conditions)
+    lst = conditionValues cs
 
 postgresQueryOnTableRepresentation
   :: forall u conditioned selected available .
@@ -192,3 +273,54 @@ postgresSelect
   -> IO [output]
 postgresSelect (Select proxy qot f) conn =
     (fmap . fmap) f (postgresQueryOnTableRepresentation qot proxy conn)
+
+postgresInsert
+  :: forall universe sym schema .
+     ( P.ToRow (RowTuple (Fmap (Representation universe) (Snds schema)))
+     )
+  => Insert universe sym schema
+  -> P.Connection
+  -> IO Int64
+postgresInsert insert conn =
+    let statement :: P.Query
+        statement = fromString (makeInsertStatement insert)
+        parameters :: RowTuple (Fmap (Representation universe) (Snds schema))
+        parameters = insertRowTuple insert
+    in  P.execute conn statement parameters
+
+postgresDelete
+  :: forall universe tableName schema conditioned .
+     ( Every (InUniverse universe) (Snds conditioned)
+     , PTF.ToField universe
+     )
+  => Delete universe tableName schema conditioned
+  -> P.Connection
+  -> IO Int64
+postgresDelete delete conn =
+    let statement :: P.Query
+        statement = fromString (makeDeleteStatement delete)
+        parameters :: [universe]
+        parameters = makeParametersFromCondition (deleteCondition delete)
+    in  P.execute conn statement parameters
+
+-- For update we must use two sources for the parameters!
+-- How to handle this?
+-- The issue is taking the RowTuple and converting it to a [universe].
+postgresUpdate
+  :: forall universe tableName schema projected conditioned .
+     ( Every (InUniverse universe) (Snds conditioned)
+     , P.ToRow (RowTuple (Fmap (Representation universe) (Snds projected)))
+     , PTF.ToField universe
+     )
+  => Update universe tableName schema projected conditioned
+  -> P.Connection
+  -> IO Int64
+postgresUpdate update conn =
+    let statement :: P.Query
+        statement = fromString (makeUpdateStatement update)
+        --assignmentParameters :: [universe]
+        --assignmentParameters = makeParametersFromRowTuple (updateRowTuple update)
+        conditionParameters :: [universe]
+        conditionParameters = makeParametersFromCondition (updateCondition update)
+        parameters = (updateRowTuple update) PT.:. conditionParameters
+    in  P.execute conn statement parameters

@@ -20,6 +20,9 @@ module Data.Relational (
   , module Data.Relational.Query
   , module Data.Relational.QueryOnTable
   , module Data.Relational.Select
+  , module Data.Relational.Insert
+  , module Data.Relational.Delete
+  , module Data.Relational.Update
 
   ) where
 
@@ -33,3 +36,6 @@ import Data.Relational.Project
 import Data.Relational.Query
 import Data.Relational.QueryOnTable
 import Data.Relational.Select
+import Data.Relational.Insert
+import Data.Relational.Delete
+import Data.Relational.Update
