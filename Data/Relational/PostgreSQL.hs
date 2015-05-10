@@ -89,33 +89,37 @@ instance InUniverse PostgresUniverse T.Text where
   type Representation PostgresUniverse T.Text = T.Text
   toUniverse _ _ = UText
   toRepresentation _ = id
-  fromRepresentation _ = id
+  fromRepresentation _ = Just
 
 instance InUniverse PostgresUniverse Int where
   type Representation PostgresUniverse Int = Int
   toUniverse _ _ = UInt
   toRepresentation _ = id
-  fromRepresentation _ = id
+  fromRepresentation _ = Just
 
 instance InUniverse PostgresUniverse Double where
   type Representation PostgresUniverse Double = Double
   toUniverse _ _ = UDouble
   toRepresentation _ = id
-  fromRepresentation _ = id
+  fromRepresentation _ = Just
 
 instance InUniverse PostgresUniverse Bool where
   type Representation PostgresUniverse Bool = Bool
   toUniverse _ _ = UBool
   toRepresentation _ = id
-  fromRepresentation _ = id
+  fromRepresentation _ = Just
 
 instance InUniverse PostgresUniverse a => InUniverse PostgresUniverse (Maybe a) where
-  type Representation PostgresUniverse (Maybe a) = Maybe a
+  type Representation PostgresUniverse (Maybe a) = Maybe (Representation PostgresUniverse a)
   toUniverse proxy1 proxy2 mebe = case mebe of
       Nothing -> UNull
-      Just x -> toUniverse proxy1 (Proxy :: Proxy a) (toRepresentation proxy1 x)
-  toRepresentation _ = id
-  fromRepresentation _ = id
+      Just x -> toUniverse proxy1 (Proxy :: Proxy a) x
+  toRepresentation proxy = fmap (toRepresentation proxy)
+  fromRepresentation proxy x = case x of
+      Nothing -> Just Nothing
+      Just y -> case fromRepresentation proxy y of
+          Nothing -> Nothing
+          Just z -> Just (Just z)
 
 instance PTF.ToField PostgresUniverse where
   toField u = case u of

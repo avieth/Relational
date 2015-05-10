@@ -30,8 +30,7 @@ class InUniverse u s where
   type Representation u s :: *
   toUniverse :: Proxy u -> Proxy s -> Representation u s -> u
   toRepresentation :: Proxy u -> s -> Representation u s
-  fromRepresentation :: Proxy u -> Representation u s -> s
-  -- ^ TBD should we wrap the rightmost type in Maybe?
+  fromRepresentation :: Proxy u -> Representation u s -> Maybe s
 
 -- | Inject an @s@ into a universe directly, without fiddling with
 --   @toUniverse@ and @toRepresentation@ and the required proxies.
