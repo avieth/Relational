@@ -341,8 +341,16 @@ type family RowTuple (xs :: [*]) :: * where
   RowTuple '[a,b,c,d,e,f,g,h,i] = (a,b,c,d,e,f,g,h,i)
   RowTuple '[a,b,c,d,e,f,g,h,i,j] = (a,b,c,d,e,f,g,h,i,j)
 
-postgresQuery
-  :: forall t conditioned selected available r .
+-- | A fetch from the database, through the RowTuple type and up to some
+--   other Haskell datatype.
+data Fetch selected constrained available output where
+  Fetch
+    :: QueryOnTable selected constrained available
+    -> (RowTuple (Snds selected) -> t)
+    -> Fetch selected constrained available t
+
+postgresQueryOnTable
+  :: forall t conditioned selected available .
      ( Every (Injection t) (Snds conditioned)
      , Every (PFF.FromField) (Snds selected)
      , PTF.ToField t
@@ -352,9 +360,22 @@ postgresQuery
   -> Proxy t
   -> P.Connection
   -> IO [RowTuple (Snds selected)]
-postgresQuery q proxy conn =
+postgresQueryOnTable q proxy conn =
     let actualQuery :: P.Query
         actualQuery = fromString (makeQuery q)
         parameters :: [t]
         parameters = makeParameters q
     in  P.query conn actualQuery parameters
+
+postgresFetch
+  :: forall t conditioned selected available output .
+     ( Every (Injection t) (Snds conditioned)
+     , Every (PFF.FromField) (Snds selected)
+     , PTF.ToField t
+     , P.FromRow (RowTuple (Snds selected))
+     )
+  => Fetch selected conditioned available output
+  -> Proxy t
+  -> P.Connection
+  -> IO [output]
+postgresFetch (Fetch qot f) proxy conn = (fmap . fmap) f (postgresQueryOnTable qot proxy conn)
