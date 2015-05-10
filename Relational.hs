@@ -34,6 +34,7 @@ import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.Types as PT
 import qualified Database.PostgreSQL.Simple.ToField as PTF
 import qualified Database.PostgreSQL.Simple.FromField as PFF
+import qualified Data.Text as T
 import Unsafe.Coerce
 
 type family NewElement (s :: k) (ss :: [k]) :: Bool where
@@ -96,6 +97,10 @@ type family Append (xs :: [k]) (ys :: [k]) :: [k] where
 type family Every (c :: k -> Constraint) (xs :: [k]) :: Constraint where
   Every c '[] = ()
   Every c (x ': xs) = (c x, Every c xs)
+
+type family Fmap (f :: k -> l) (xs :: [k]) :: [l] where
+  Fmap f '[] = '[]
+  Fmap f (x ': xs) = f x ': (Fmap f xs)
 
 data HList :: [*] -> * where
   EmptyHList :: HList '[]
@@ -254,42 +259,23 @@ makeQueryConditionClause constr = case constr of
   AndCondition left right -> concat [makeQueryConditionClause left, " AND ", makeQueryConditionClause right]
   OrCondition left right -> concat [makeQueryConditionClause left, " OR ", makeQueryConditionClause right]
 
--- | We are interested in  Injection Universe s  constraints.
-class Injection t s where
-  inject :: s -> t
+class InUniverse u s where
+  type Representation u s :: *
+  toUniverse :: Proxy u -> Proxy s -> Representation u s -> u
+  toRepresentation :: Proxy u -> s -> Representation u s
+  fromRepresentation :: Proxy u -> Representation u s -> s
+  -- ^ TBD should we wrap the rightmost type in Maybe?
 
-injects
-  :: ( Every (Injection t) types
-     )
-  => Proxy t
-  -> HList types
-  -> [t]
-injects proxy lst = case lst of
-    EmptyHList -> []
-    ConsHList x rest -> inject x : injects proxy rest
-
-makeParametersFromQuery
-  :: forall t conditions selects .
-     ( Every (Injection t) (Snds conditions)
-     )
-  => Query selects conditions
-  -> [t]
-makeParametersFromQuery q = case q of
-    Query _ cs -> injects (Proxy :: Proxy t) lst
-      where
-        lst :: HList (Snds conditions)
-        lst = conditionValues cs
-
-makeParameters
-  :: ( Every (Injection t) (Snds conditioned)
-     )
-  => QueryOnTable selected conditioned available
-  -> [t]
-makeParameters q = case q of
-    QueryOnTable q _ -> makeParametersFromQuery q
+directToUniverse :: forall u s . InUniverse u s => Proxy u -> s -> u
+directToUniverse proxy x =
+    let rep :: Representation u s
+        rep = toRepresentation proxy x
+        uni :: Representation u s -> u
+        uni = toUniverse proxy (Proxy :: Proxy s)
+    in  uni rep
 
 data Universe where
-    UText :: String -> Universe
+    UText :: T.Text -> Universe
     -- TODO use Text.
     UInt :: Int -> Universe
     UDouble :: Double -> Universe
@@ -297,22 +283,37 @@ data Universe where
     UNull :: Universe
   deriving Show
 
-instance Injection Universe String where
-  inject = UText
+instance InUniverse Universe T.Text where
+  type Representation Universe T.Text = T.Text
+  toUniverse _ _ = UText
+  toRepresentation _ = id
+  fromRepresentation _ = id
 
-instance Injection Universe Int where
-  inject = UInt
+instance InUniverse Universe Int where
+  type Representation Universe Int = Int
+  toUniverse _ _ = UInt
+  toRepresentation _ = id
+  fromRepresentation _ = id
 
-instance Injection Universe Double where
-  inject = UDouble
+instance InUniverse Universe Double where
+  type Representation Universe Double = Double
+  toUniverse _ _ = UDouble
+  toRepresentation _ = id
+  fromRepresentation _ = id
 
-instance Injection Universe Bool where
-  inject = UBool
+instance InUniverse Universe Bool where
+  type Representation Universe Bool = Bool
+  toUniverse _ _ = UBool
+  toRepresentation _ = id
+  fromRepresentation _ = id
 
-instance Injection Universe a => Injection Universe (Maybe a) where
-  inject mebe = case mebe of
+instance InUniverse Universe a => InUniverse Universe (Maybe a) where
+  type Representation Universe (Maybe a) = Maybe a
+  toUniverse proxy1 proxy2 mebe = case mebe of
       Nothing -> UNull
-      Just x -> inject x
+      Just x -> toUniverse proxy1 (Proxy :: Proxy a) (toRepresentation proxy1 x)
+  toRepresentation _ = id
+  fromRepresentation _ = id
 
 instance PTF.ToField Universe where
   toField u = case u of
@@ -322,11 +323,35 @@ instance PTF.ToField Universe where
       UBool b -> PTF.toField b
       UNull -> PTF.toField PT.Null
 
--- Now we have sorted out the query and its parameters, and we must turn our
--- attention to the return value! Where is that specified? Surely as part of
--- the QueryOnTable.
--- Hm, no, can we not just give back lists corresponding to the selected
--- columns? Yeah, that's the right solution.
+injects
+  :: ( Every (InUniverse u) types
+     )
+  => Proxy u
+  -> HList types
+  -> [u]
+injects proxy lst = case lst of
+    EmptyHList -> []
+    ConsHList x rest -> (directToUniverse proxy x) : (injects proxy rest)
+
+makeParametersFromQuery
+  :: forall u conditions selects .
+     ( Every (InUniverse u) (Snds conditions)
+     )
+  => Query selects conditions
+  -> [u]
+makeParametersFromQuery q = case q of
+    Query _ cs -> injects (Proxy :: Proxy u) lst
+      where
+        lst :: HList (Snds conditions)
+        lst = conditionValues cs
+
+makeParameters
+  :: ( Every (InUniverse u) (Snds conditioned)
+     )
+  => QueryOnTable selected conditioned available
+  -> [u]
+makeParameters q = case q of
+    QueryOnTable q _ -> makeParametersFromQuery q
 
 type family RowTuple (xs :: [*]) :: * where
   RowTuple '[] = ()
@@ -341,41 +366,46 @@ type family RowTuple (xs :: [*]) :: * where
   RowTuple '[a,b,c,d,e,f,g,h,i] = (a,b,c,d,e,f,g,h,i)
   RowTuple '[a,b,c,d,e,f,g,h,i,j] = (a,b,c,d,e,f,g,h,i,j)
 
--- | A fetch from the database, through the RowTuple type and up to some
---   other Haskell datatype.
-data Fetch selected constrained available output where
+-- | A fetch from the database, through the RowTuple of representations
+--   for some universe and up to a domain-specific Haskell datatype.
+data Fetch universe selected constrained available output where
   Fetch
-    :: QueryOnTable selected constrained available
-    -> (RowTuple (Snds selected) -> t)
-    -> Fetch selected constrained available t
+    :: Proxy universe
+    -> QueryOnTable selected constrained available
+    -> (RowTuple (Fmap (Representation universe) (Snds selected)) -> t)
+    -> Fetch universe selected constrained available t
 
-postgresQueryOnTable
-  :: forall t conditioned selected available .
-     ( Every (Injection t) (Snds conditioned)
-     , Every (PFF.FromField) (Snds selected)
-     , PTF.ToField t
-     , P.FromRow (RowTuple (Snds selected))
+postgresQueryOnTableRepresentation
+  :: forall u conditioned selected available .
+     ( Every (InUniverse u) (Snds conditioned)
+     , Every (PFF.FromField) (Fmap (Representation u) (Snds selected))
+     , PTF.ToField u
+     , P.FromRow (RowTuple (Fmap (Representation u) (Snds selected)))
      )
   => QueryOnTable selected conditioned available
-  -> Proxy t
+  -> Proxy u
   -> P.Connection
-  -> IO [RowTuple (Snds selected)]
-postgresQueryOnTable q proxy conn =
+  -> IO [RowTuple (Fmap (Representation u) (Snds selected))]
+postgresQueryOnTableRepresentation q proxy conn =
     let actualQuery :: P.Query
         actualQuery = fromString (makeQuery q)
-        parameters :: [t]
+        parameters :: [u]
         parameters = makeParameters q
     in  P.query conn actualQuery parameters
 
 postgresFetch
-  :: forall t conditioned selected available output .
-     ( Every (Injection t) (Snds conditioned)
-     , Every (PFF.FromField) (Snds selected)
-     , PTF.ToField t
-     , P.FromRow (RowTuple (Snds selected))
+  :: forall u conditioned selected available output .
+     ( Every (InUniverse u) (Snds conditioned)
+     , Every (PFF.FromField) (Fmap (Representation u) (Snds selected))
+     , PTF.ToField u
+     , P.FromRow (RowTuple (Fmap (Representation u) (Snds selected)))
      )
-  => Fetch selected conditioned available output
-  -> Proxy t
+  => Fetch u selected conditioned available output
   -> P.Connection
   -> IO [output]
-postgresFetch (Fetch qot f) proxy conn = (fmap . fmap) f (postgresQueryOnTable qot proxy conn)
+postgresFetch (Fetch proxy qot f) conn =
+    (fmap . fmap) f (postgresQueryOnTableRepresentation qot proxy conn)
+
+-- A new idea: one type, DataModel or something, which holds a set of tables,
+-- presumably every table that your app can work with, and ensure that no
+-- two tables with the same name (Symbol) have different schemas.
