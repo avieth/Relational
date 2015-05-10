@@ -6,6 +6,10 @@ Licence     : BSD3
 Maintainer  : aovieth@gmail.com
 Stability   : experimental
 Portability : non-portable (GHC only)
+
+Here we define a bunch of types and type-level programs to be used elsewhere
+in the repository.
+
 -}
 
 {-# LANGUAGE AutoDeriveTypeable #-}
@@ -29,6 +33,8 @@ module Data.Relational.Types (
   , Snds
   , Elem
   , Subset
+  , SubsetUnique
+  , Remove
   , And
   , IfElse
   , Union
@@ -75,6 +81,17 @@ type family Subset (xs :: [k]) (ys :: [k]) :: Bool where
   Subset (x ': xs) ys = And (Elem x ys) (Subset xs ys)
   -- This clause demands UndecidableInstances, but it's OK. It will
   -- terminate for finite lists.
+
+-- | Like Subset but duplicates are not ignores, so that [Bool, Bool] is not
+--   a subset of [Bool], but [Bool, Int] is a subset of [Bool, Bool, Int, Int].
+type family SubsetUnique (xs :: [k]) (ys :: [k]) :: Bool where
+  SubsetUnique '[] ys = 'True
+  SubsetUnique (x ': xs) ys = And (Elem x ys) (SubsetUnique xs (Remove x ys))
+
+type family Remove (x :: k) (xs :: [k]) :: [k] where
+  Remove x '[] = '[]
+  Remove x (x ': xs) = xs
+  Remove x (y ': ys) = y ': (Remove x ys)
 
 type family And (x :: Bool) (y :: Bool) :: Bool where
   And 'True 'True = 'True
