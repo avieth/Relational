@@ -20,11 +20,13 @@ module Data.Relational.Project (
     Project(..)
   , nil
   , (.+|)
+  , fullProjection
 
   ) where
 
 import GHC.TypeLits
 import Data.Relational.Column
+import Data.Relational.Schema
 
 -- | A description of which columns to select.
 --   A Project is like a schema, but there can be duplicate columns.
@@ -39,3 +41,9 @@ infixr 9 .+|
 
 (.+|) :: Column sym u -> Project lst -> Project ('(sym, u) ': lst)
 (.+|) = ConsProject
+
+-- | A projection onto every column in a schema.
+fullProjection :: Schema schema -> Project schema
+fullProjection sch = case sch of
+    EmptySchema -> EmptyProject
+    ConsSchema col rest -> ConsProject col (fullProjection rest)
