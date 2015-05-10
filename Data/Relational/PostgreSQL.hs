@@ -26,7 +26,7 @@ Portability : non-portable (GHC only)
 module Data.Relational.PostgreSQL (
 
     PostgresUniverse(..)
-  , postgresFetch
+  , postgresSelect
 
   ) where
 
@@ -176,15 +176,15 @@ postgresQueryOnTableRepresentation q proxy conn =
         parameters = makeParameters q
     in  P.query conn actualQuery parameters
 
-postgresFetch
+postgresSelect
   :: forall u conditioned selected available output .
      ( Every (InUniverse u) (Snds conditioned)
      , Every (PFF.FromField) (Fmap (Representation u) (Snds selected))
      , PTF.ToField u
      , P.FromRow (RowTuple (Fmap (Representation u) (Snds selected)))
      )
-  => Fetch u selected conditioned available output
+  => Select u selected conditioned available output
   -> P.Connection
   -> IO [output]
-postgresFetch (Fetch proxy qot f) conn =
+postgresSelect (Select proxy qot f) conn =
     (fmap . fmap) f (postgresQueryOnTableRepresentation qot proxy conn)

@@ -19,7 +19,7 @@ module Data.Relational (
   , module Data.Relational.Project
   , module Data.Relational.Query
   , module Data.Relational.QueryOnTable
-  , module Data.Relational.Fetch
+  , module Data.Relational.Select
 
   ) where
 
@@ -32,4 +32,4 @@ import Data.Relational.Condition
 import Data.Relational.Project
 import Data.Relational.Query
 import Data.Relational.QueryOnTable
-import Data.Relational.Fetch
+import Data.Relational.Select

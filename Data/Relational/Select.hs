@@ -1,5 +1,5 @@
 {-|
-Module      : Data.Relational.Fetch
+Module      : Data.Relational.Select
 Description : Description of a QueryOnTable in a given universe.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
@@ -17,9 +17,9 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module Data.Relational.Fetch (
+module Data.Relational.Select (
 
-    Fetch(..)
+    Select(..)
 
   ) where
 
@@ -28,11 +28,10 @@ import Data.Relational.Types
 import Data.Relational.Universe
 import Data.Relational.QueryOnTable
 
--- | A fetch from the database, through the RowTuple of representations
---   for some universe and up to a domain-specific Haskell datatype.
-data Fetch universe selected constrained available output where
-  Fetch
+-- | A selection from the database.
+data Select universe selected constrained available output where
+  Select
     :: Proxy universe
     -> QueryOnTable selected constrained available
     -> (RowTuple (Fmap (Representation universe) (Snds selected)) -> t)
-    -> Fetch universe selected constrained available t
+    -> Select universe selected constrained available t
