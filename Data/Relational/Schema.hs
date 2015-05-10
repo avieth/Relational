@@ -20,7 +20,8 @@ Portability : non-portable (GHC only)
 module Data.Relational.Schema (
 
     Schema(..)
-  , 
+  , endSchema
+  , (.:|)
 
   ) where
 
@@ -52,3 +53,16 @@ data Schema :: [(Symbol, *)] -> * where
     => Column sym u
     -> Schema lst
     -> Schema ('(sym, u) ': lst)
+
+endSchema :: Schema '[]
+endSchema = EmptySchema
+
+infixr 9 .:|
+
+(.:|) 
+  :: ( NewElement sym (Fsts lst) ~ 'True
+     )
+  => Column sym u
+  -> Schema lst
+  -> Schema ('(sym, u) ': lst)
+(.:|) = ConsSchema
