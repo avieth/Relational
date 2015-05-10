@@ -235,17 +235,14 @@ makeQuery (QueryOnTable (Query select constrain) table) =
     conditionClause = makeQueryConditionClause constrain
 
 makeQuerySelectClause :: Select ss -> String
-makeQuerySelectClause sel = concat ["(", makeSelectFields sel, ")"]
+makeQuerySelectClause = concat . intersperse "," . makeSelectFields
 
   where
 
-    makeSelectFields :: Select ss -> String
-    makeSelectFields = concat . intersperse "," . makeSelectFields'
-
-    makeSelectFields' :: Select ss -> [String]
-    makeSelectFields' sel = case sel of
+    makeSelectFields :: Select ss -> [String]
+    makeSelectFields sel = case sel of
         EmptySelect -> []
-        ConsSelect col rest -> columnName col : makeSelectFields' rest
+        ConsSelect col rest -> columnName col : makeSelectFields rest
         
 
 makeQueryConditionClause :: Condition cs -> String
@@ -331,11 +328,9 @@ instance PTF.ToField Universe where
 -- Hm, no, can we not just give back lists corresponding to the selected
 -- columns? Yeah, that's the right solution.
 
-data Single t = Single t
-
 type family RowTuple (xs :: [*]) :: * where
   RowTuple '[] = ()
-  RowTuple '[a] = Single a
+  RowTuple '[a] = PT.Only a
   RowTuple '[a,b] = (a,b)
   RowTuple '[a,b,c] = (a,b,c)
   RowTuple '[a,b,c,d] = (a,b,c,d)
@@ -353,11 +348,11 @@ postgresQuery
      , PTF.ToField t
      , P.FromRow (RowTuple (Snds selected))
      )
-  => P.Connection
+  => QueryOnTable selected conditioned available
   -> Proxy t
-  -> QueryOnTable selected conditioned available
+  -> P.Connection
   -> IO [RowTuple (Snds selected)]
-postgresQuery conn proxy q =
+postgresQuery q proxy conn =
     let actualQuery :: P.Query
         actualQuery = fromString (makeQuery q)
         parameters :: [t]
