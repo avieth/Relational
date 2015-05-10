@@ -10,15 +10,16 @@ Portability : non-portable (GHC only)
 
 module Data.Relational (
 
-    module Data.Relational.Column
+    module Data.Relational.Types
+  , module Data.Relational.Universe
+  , module Data.Relational.Column
   , module Data.Relational.Schema
   , module Data.Relational.Table
   , module Data.Relational.Condition
   , module Data.Relational.Select
   , module Data.Relational.Query
   , module Data.Relational.QueryOnTable
-  , module Data.Relational.Types
-  , module Data.Relational.Universe
+  , module Data.Relational.Fetch
 
   ) where
 
@@ -31,3 +32,4 @@ import Data.Relational.Condition
 import Data.Relational.Select
 import Data.Relational.Query
 import Data.Relational.QueryOnTable
+import Data.Relational.Fetch

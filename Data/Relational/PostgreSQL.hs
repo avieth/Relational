@@ -1,5 +1,5 @@
 {-|
-Module      :
+Module      : Data.Relational.PostgreSQL
 Description : PostgreSQL-simple driver for Relational.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
@@ -23,6 +23,13 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 
+module Data.Relational.PostgreSQL (
+
+    PostgresUniverse(..)
+  , postgresFetch
+
+  ) where
+
 import Data.Proxy
 import Data.List (intersperse)
 import Data.String (fromString)
@@ -30,6 +37,7 @@ import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.Types as PT
 import qualified Database.PostgreSQL.Simple.ToField as PTF
 import qualified Database.PostgreSQL.Simple.FromField as PFF
+import qualified Database.PostgreSQL.Simple.FromRow as PFR
 import qualified Data.Text as T
 import Data.Relational
 
@@ -117,6 +125,9 @@ instance PTF.ToField PostgresUniverse where
       UBool b -> PTF.toField b
       UNull -> PTF.toField PT.Null
 
+instance (PFF.FromField a) => PFR.FromRow (Only a) where
+  fromRow = fmap Only PFR.field
+
 injects
   :: ( Every (InUniverse u) types
      )
@@ -146,28 +157,6 @@ makeParameters
   -> [u]
 makeParameters q = case q of
     QueryOnTable q _ -> makeParametersFromQuery q
-
-type family RowTuple (xs :: [*]) :: * where
-  RowTuple '[] = ()
-  RowTuple '[a] = PT.Only a
-  RowTuple '[a,b] = (a,b)
-  RowTuple '[a,b,c] = (a,b,c)
-  RowTuple '[a,b,c,d] = (a,b,c,d)
-  RowTuple '[a,b,c,d,e] = (a,b,c,d,e)
-  RowTuple '[a,b,c,d,e,f] = (a,b,c,d,e,f)
-  RowTuple '[a,b,c,d,e,f,g] = (a,b,c,d,e,f,g)
-  RowTuple '[a,b,c,d,e,f,g,h] = (a,b,c,d,e,f,g,h)
-  RowTuple '[a,b,c,d,e,f,g,h,i] = (a,b,c,d,e,f,g,h,i)
-  RowTuple '[a,b,c,d,e,f,g,h,i,j] = (a,b,c,d,e,f,g,h,i,j)
-
--- | A fetch from the database, through the RowTuple of representations
---   for some universe and up to a domain-specific Haskell datatype.
-data Fetch universe selected constrained available output where
-  Fetch
-    :: Proxy universe
-    -> QueryOnTable selected constrained available
-    -> (RowTuple (Fmap (Representation universe) (Snds selected)) -> t)
-    -> Fetch universe selected constrained available t
 
 postgresQueryOnTableRepresentation
   :: forall u conditioned selected available .
@@ -199,7 +188,3 @@ postgresFetch
   -> IO [output]
 postgresFetch (Fetch proxy qot f) conn =
     (fmap . fmap) f (postgresQueryOnTableRepresentation qot proxy conn)
-
--- A new idea: one type, DataModel or something, which holds a set of tables,
--- presumably every table that your app can work with, and ensure that no
--- two tables with the same name (Symbol) have different schemas.

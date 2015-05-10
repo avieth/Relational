@@ -17,6 +17,8 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 module Data.Relational.Types (
 
@@ -31,9 +33,12 @@ module Data.Relational.Types (
   , IfElse
   , Union
   , Append
+  , Every
   , Fmap
   , HList(..)
   , appendHList
+  , Only(..)
+  , RowTuple
 
   ) where
 
@@ -109,3 +114,19 @@ appendHList left right = case left of
     ConsHList x rest -> case right of
         EmptyHList -> left
         ConsHList _ _ -> ConsHList x (appendHList rest right)
+
+newtype Only a = Only { fromOnly :: a }
+  deriving (Eq, Ord, Read, Show, Functor)
+
+type family RowTuple (xs :: [*]) :: * where
+  RowTuple '[] = ()
+  RowTuple '[a] = Only a
+  RowTuple '[a,b] = (a,b)
+  RowTuple '[a,b,c] = (a,b,c)
+  RowTuple '[a,b,c,d] = (a,b,c,d)
+  RowTuple '[a,b,c,d,e] = (a,b,c,d,e)
+  RowTuple '[a,b,c,d,e,f] = (a,b,c,d,e,f)
+  RowTuple '[a,b,c,d,e,f,g] = (a,b,c,d,e,f,g)
+  RowTuple '[a,b,c,d,e,f,g,h] = (a,b,c,d,e,f,g,h)
+  RowTuple '[a,b,c,d,e,f,g,h,i] = (a,b,c,d,e,f,g,h,i)
+  RowTuple '[a,b,c,d,e,f,g,h,i,j] = (a,b,c,d,e,f,g,h,i,j)
