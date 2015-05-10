@@ -22,6 +22,12 @@ module Data.Relational.Condition (
     Condition(..)
   , conditionValues
 
+  , (.==.)
+  , (.<.)
+  , (.>.)
+  , (.&&.)
+  , (.||.)
+
   ) where
 
 import GHC.TypeLits
@@ -58,3 +64,24 @@ conditionValues cdn = case cdn of
     -- So instead I use unsafeCoerce.
     AndCondition left right -> unsafeCoerce $ appendHList (conditionValues left) (conditionValues right)
     OrCondition left right -> unsafeCoerce $ appendHList (conditionValues left) (conditionValues right)
+
+infixr 9 .&&.
+infixr 9 .||.
+infixr 8 .==.
+infixr 8 .<.
+infixr 8 .>.
+
+(.==.) :: Column sym t -> t -> Condition '[ '(sym, t) ]
+(.==.) = EqCondition
+
+(.<.) :: Column sym t -> t -> Condition '[ '(sym, t) ]
+(.<.) = LtCondition
+
+(.>.) :: Column sym t -> t -> Condition '[ '(sym, t) ]
+(.>.) = GtCondition
+
+(.&&.) :: Condition cs -> Condition cs' -> Condition (Append cs cs')
+(.&&.) = AndCondition
+
+(.||.) :: Condition cs -> Condition cs' -> Condition (Append cs cs')
+(.||.) = OrCondition
