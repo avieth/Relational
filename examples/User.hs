@@ -57,10 +57,10 @@ ageColumn :: Column "age" Age
 ageColumn = Column (Proxy :: Proxy "age") (Proxy :: Proxy Age)
 
 userSchema :: Schema '[ '("username", Username) ]
-userSchema = ConsSchema userNameColumn EmptySchema
+userSchema = userNameColumn .:| endSchema
 
 userProfileSchema :: Schema '[ '("username", Username), '("fullname", Fullname), '("age", Age) ]
-userProfileSchema = ConsSchema userNameColumn (ConsSchema fullNameColumn (ConsSchema ageColumn EmptySchema))
+userProfileSchema = userNameColumn .:|  fullNameColumn .:| ageColumn .:| endSchema
 
 userTable :: Table "users" '[ '("username", Username) ]
 userTable = Table (Proxy :: Proxy "users") userSchema
@@ -69,18 +69,18 @@ userProfileTable :: Table "user_profiles" '[ '("username", Username), '("fullnam
 userProfileTable = Table (Proxy :: Proxy "user_profiles") userProfileSchema
 
 fetchProfileForUsername uname =
-    Fetch proxy queryOnTable (\(username, fullname, age) ->  UserProfile (Username username) (Fullname fullname) (Age age))
+    Select proxy queryOnTable (\(username, fullname, age) ->  UserProfile (Username username) (Fullname fullname) (Age age))
   where
     proxy :: Proxy PostgresUniverse
     proxy = Proxy
     queryOnTable = QueryOnTable queryByUsername userProfileTable
     queryByUsername =
         Query
-          (ConsSelect userNameColumn (ConsSelect fullNameColumn (ConsSelect ageColumn EmptySelect)))
-          (EqCondition userNameColumn uname)
+          (userNameColumn .+| fullNameColumn .+| ageColumn .+| nil)
+          (userNameColumn .==. uname)
 
 example = do
     conn <- P.connect (P.defaultConnectInfo { P.connectUser = "alex" })
-    rows <- postgresFetch (fetchProfileForUsername (Username (T.pack "alex"))) conn
+    rows <- postgresSelect (fetchProfileForUsername (Username (T.pack "alex"))) conn
     print rows
     return ()
