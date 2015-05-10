@@ -13,8 +13,9 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-import Relational
 import Data.Proxy
+import Data.Relational
+import Data.Relational.PostgreSQL
 import qualified Data.Text as T
 import qualified Database.PostgreSQL.Simple as P
 
@@ -25,20 +26,20 @@ newtype Fullname = Fullname T.Text
 newtype Age = Age Int
   deriving (Show)
 
-instance InUniverse Universe Username where
-  type Representation Universe Username = T.Text
+instance InUniverse PostgresUniverse Username where
+  type Representation PostgresUniverse Username = T.Text
   toUniverse proxyU _ = toUniverse proxyU (Proxy :: Proxy T.Text)
   toRepresentation proxy (Username t) = t
   fromRepresentation proxy = Username
 
-instance InUniverse Universe Fullname where
-  type Representation Universe Fullname = T.Text
+instance InUniverse PostgresUniverse Fullname where
+  type Representation PostgresUniverse Fullname = T.Text
   toUniverse proxyU _ = toUniverse proxyU (Proxy :: Proxy T.Text)
   toRepresentation proxy (Fullname t) = t
   fromRepresentation proxy = Fullname
 
-instance InUniverse Universe Age where
-  type Representation Universe Age = Int
+instance InUniverse PostgresUniverse Age where
+  type Representation PostgresUniverse Age = Int
   toUniverse proxyU _ = toUniverse proxyU (Proxy :: Proxy Int)
   toRepresentation proxy (Age i) = i
   fromRepresentation proxy = Age
@@ -70,7 +71,7 @@ userProfileTable = Table (Proxy :: Proxy "user_profiles") userProfileSchema
 fetchProfileForUsername uname =
     Fetch proxy queryOnTable (\(username, fullname, age) ->  UserProfile (Username username) (Fullname fullname) (Age age))
   where
-    proxy :: Proxy Universe
+    proxy :: Proxy PostgresUniverse
     proxy = Proxy
     queryOnTable = QueryOnTable queryByUsername userProfileTable
     queryByUsername =
@@ -78,3 +79,8 @@ fetchProfileForUsername uname =
           (ConsSelect userNameColumn (ConsSelect fullNameColumn (ConsSelect ageColumn EmptySelect)))
           (EqCondition userNameColumn uname)
 
+example = do
+    conn <- P.connect (P.defaultConnectInfo { P.connectUser = "alex" })
+    rows <- postgresFetch (fetchProfileForUsername (Username (T.pack "alex"))) conn
+    print rows
+    return ()
