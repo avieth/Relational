@@ -18,6 +18,8 @@ Portability : non-portable (GHC only)
 module Data.Relational.Select (
 
     Select(..)
+  , nil
+  , (.+|)
 
   ) where
 
@@ -29,3 +31,11 @@ import Data.Relational.Column
 data Select :: [(Symbol, *)] -> * where
   EmptySelect :: Select '[]
   ConsSelect :: Column sym u -> Select lst -> Select ('(sym, u) ': lst)
+
+nil :: Select '[]
+nil = EmptySelect
+
+infixr 9 .+|
+
+(.+|) :: Column sym u -> Select lst -> Select ('(sym, u) ': lst)
+(.+|) = ConsSelect
