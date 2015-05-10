@@ -20,6 +20,7 @@ module Data.Relational.Table (
 
     Table(..)
   , tableName
+  , tableSchema
 
   ) where
 
@@ -34,3 +35,6 @@ data Table :: Symbol -> [(Symbol, *)] -> * where
 -- | The name of a Table.
 tableName :: Table sym t -> String
 tableName (Table symbol _) = symbolVal symbol
+
+tableSchema :: Table sym xs -> Schema xs
+tableSchema (Table _ sch) = sch
