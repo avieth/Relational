@@ -145,12 +145,9 @@ schema2 = ConsSchema column3 schema1
 
 schema4 = ConsSchema column1 (ConsSchema column3 EmptySchema)
 
-data Value :: * -> * where
-  Value :: t -> Value t
-
 data Condition :: [(Symbol, *)] -> * where
   EmptyCondition :: Condition '[]
-  EqCondition :: Column sym t -> Value t -> Condition '[ '(sym, t) ]
+  EqCondition :: Column sym t -> t -> Condition '[ '(sym, t) ]
   AndCondition :: Condition cs -> Condition cs' -> Condition (Append cs cs')
   OrCondition :: Condition cs -> Condition cs' -> Condition (Append cs cs')
   -- ^ We Append rather than Union so that the length of the type list parameter
@@ -160,7 +157,7 @@ data Condition :: [(Symbol, *)] -> * where
 conditionValues :: Condition cs -> HList (Snds cs)
 conditionValues cdn = case cdn of
     EmptyCondition -> EmptyHList
-    EqCondition col (Value x) -> ConsHList x EmptyHList
+    EqCondition col x -> ConsHList x EmptyHList
     -- I cannot figure out how to convince GHC that
     --
     --   cs ~ Append cs1 cs2
@@ -171,13 +168,13 @@ conditionValues cdn = case cdn of
     AndCondition left right -> unsafeCoerce $ appendHList (conditionValues left) (conditionValues right)
     OrCondition left right -> unsafeCoerce $ appendHList (conditionValues left) (conditionValues right)
 
-constraint1 = EqCondition column1 (Value 1)
+constraint1 = EqCondition column1 1
 
-constraint2 = EqCondition column2 (Value "Foobar")
+constraint2 = EqCondition column2 "Foobar"
 
-constraint3 = EqCondition column3 (Value False)
+constraint3 = EqCondition column3 False
 
-constraint4 = EqCondition column1 (Value 2)
+constraint4 = EqCondition column1 2
 
 constraint5 = AndCondition constraint1 (AndCondition constraint2 constraint4)
 
