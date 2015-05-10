@@ -73,8 +73,8 @@ type family Elem (x :: k) (xs :: [k]) :: Bool where
 type family Subset (xs :: [k]) (ys :: [k]) :: Bool where
   Subset '[] ys = 'True
   Subset (x ': xs) ys = And (Elem x ys) (Subset xs ys)
-  -- ^ This clause demands UndecidableInstances, but it's OK. It will
-  --   terminate for finite lists.
+  -- This clause demands UndecidableInstances, but it's OK. It will
+  -- terminate for finite lists.
 
 type family And (x :: Bool) (y :: Bool) :: Bool where
   And 'True 'True = 'True

@@ -37,9 +37,9 @@ data Condition :: [(Symbol, *)] -> * where
   GtCondition :: Column sym t -> t -> Condition '[ '(sym, t) ]
   AndCondition :: Condition cs -> Condition cs' -> Condition (Append cs cs')
   OrCondition :: Condition cs -> Condition cs' -> Condition (Append cs cs')
-  -- ^ We Append rather than Union so that the length of the type list parameter
-  --   will be exactly the number of parameter substitutions required to do
-  --   a DB query.
+  -- We Append rather than Union so that the length of the type list parameter
+  -- will be exactly the number of parameter substitutions required to do
+  -- a DB query.
 
 -- | Extract the values used in a Condition, i.e. the reference values for
 --   equality and ordering.
