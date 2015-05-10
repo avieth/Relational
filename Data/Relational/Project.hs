@@ -1,5 +1,5 @@
 {-|
-Module      : Data.Relational.Select
+Module      : Data.Relational.Project
 Description : Description of selections of columns.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
@@ -15,9 +15,9 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Data.Relational.Select (
+module Data.Relational.Project (
 
-    Select(..)
+    Project(..)
   , nil
   , (.+|)
 
@@ -27,15 +27,15 @@ import GHC.TypeLits
 import Data.Relational.Column
 
 -- | A description of which columns to select.
---   A Select is like a schema, but there can be duplicate columns.
-data Select :: [(Symbol, *)] -> * where
-  EmptySelect :: Select '[]
-  ConsSelect :: Column sym u -> Select lst -> Select ('(sym, u) ': lst)
+--   A Project is like a schema, but there can be duplicate columns.
+data Project :: [(Symbol, *)] -> * where
+  EmptyProject :: Project '[]
+  ConsProject :: Column sym u -> Project lst -> Project ('(sym, u) ': lst)
 
-nil :: Select '[]
-nil = EmptySelect
+nil :: Project '[]
+nil = EmptyProject
 
 infixr 9 .+|
 
-(.+|) :: Column sym u -> Select lst -> Select ('(sym, u) ': lst)
-(.+|) = ConsSelect
+(.+|) :: Column sym u -> Project lst -> Project ('(sym, u) ': lst)
+(.+|) = ConsProject

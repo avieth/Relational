@@ -55,15 +55,15 @@ makeQuery (QueryOnTable (Query select constrain) table) =
     selectClause = makeQuerySelectClause select
     conditionClause = makeQueryConditionClause constrain
 
-makeQuerySelectClause :: Select ss -> String
+makeQuerySelectClause :: Project ss -> String
 makeQuerySelectClause = concat . intersperse "," . makeSelectFields
 
   where
 
-    makeSelectFields :: Select ss -> [String]
+    makeSelectFields :: Project ss -> [String]
     makeSelectFields sel = case sel of
-        EmptySelect -> []
-        ConsSelect col rest -> columnName col : makeSelectFields rest
+        EmptyProject -> []
+        ConsProject col rest -> columnName col : makeSelectFields rest
 
 makeQueryConditionClause :: Condition cs -> String
 makeQueryConditionClause constr = case constr of

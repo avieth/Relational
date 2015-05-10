@@ -21,9 +21,9 @@ module Data.Relational.Query (
   ) where
 
 import GHC.TypeLits
-import Data.Relational.Select
+import Data.Relational.Project
 import Data.Relational.Condition
 
--- | A Query is a Select and a Condition.
+-- | A Query is a projection and a condition.
 data Query :: [(Symbol, *)] -> [(Symbol, *)] -> * where
-  Query :: Select ss -> Condition cs -> Query ss cs
+  Query :: Project ss -> Condition cs -> Query ss cs
