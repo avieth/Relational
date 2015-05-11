@@ -20,19 +20,36 @@ Portability : non-portable (GHC only)
 module Data.Relational.Select (
 
     Select(..)
+  , selectTable
+  , selectProjection
+  , selectCondition
 
   ) where
 
 import Data.Proxy
 import Data.Relational.Types
 import Data.Relational.Universe
-import Data.Relational.QueryOnTable
+import Data.Relational.Table
+import Data.Relational.Project
+import Data.Relational.Condition
 
 -- | A selection from the database.
-data Select universe selected constrained available output where
+data Select universe tableName selected conditioned schema where
   Select
-    :: Proxy universe
-    -> QueryOnTable selected constrained available
-    -> (HList (Fmap universe (Snds selected)) -> t)
-    -- TODO should not have this function; should meld QueryOnTable into this.
-    -> Select universe selected constrained available t
+    :: ( Subset selected schema ~ 'True
+       , Subset conditioned schema ~ 'True
+       )
+    => Proxy universe
+    -> Table tableName schema
+    -> Project selected
+    -> Condition conditioned
+    -> Select universe tableName selected conditioned schema
+
+selectTable :: Select universe tableName selected conditioned schema -> Table tableName schema
+selectTable (Select _ t _ _) = t
+
+selectProjection :: Select universe tableName selected conditioned schema -> Project selected
+selectProjection (Select _ _ p _) = p
+
+selectCondition :: Select universe tableName selected conditioned schema -> Condition conditioned
+selectCondition (Select _ _ _ c) = c

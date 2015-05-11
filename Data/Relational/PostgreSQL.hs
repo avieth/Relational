@@ -121,7 +121,7 @@ makeDeleteStatement (Delete proxy table condition) =
     , conditionClause
     ]
   where
-    conditionClause = makeQueryConditionClause condition
+    conditionClause = makeConditionClause condition
 
 makeUpdateStatement :: Update universe sym schema projected conditioned -> String
 makeUpdateStatement update =
@@ -131,7 +131,7 @@ makeUpdateStatement update =
     , " SET "
     , assignments (updateProject update)
     , " WHERE "
-    , makeQueryConditionClause (updateCondition update)
+    , makeConditionClause (updateCondition update)
     ]
 
   where
@@ -145,22 +145,22 @@ makeUpdateStatement update =
         EmptyProject -> []
         ConsProject col rest -> (concat [columnName col, " = ?"]) : (makeAssignments rest)
 
-makeQuery :: QueryOnTable selected conditioned available -> String
-makeQuery (QueryOnTable (Query select constrain) table) = 
+makeSelectQuery :: Select univerese tableName selected conditioned available -> String
+makeSelectQuery select =
     concat
     [ "SELECT "
-    , selectClause
+    , projectionClause
     , " FROM "
-    , tableName table
+    , tableName (selectTable select)
     , " WHERE "
     , conditionClause
     ]
   where
-    selectClause = makeQuerySelectClause select
-    conditionClause = makeQueryConditionClause constrain
+    projectionClause = makeProjectionClause (selectProjection select)
+    conditionClause = makeConditionClause (selectCondition select)
 
-makeQuerySelectClause :: Project ss -> String
-makeQuerySelectClause = concat . intersperse "," . makeSelectFields
+makeProjectionClause :: Project ss -> String
+makeProjectionClause = concat . intersperse "," . makeSelectFields
 
   where
 
@@ -169,16 +169,16 @@ makeQuerySelectClause = concat . intersperse "," . makeSelectFields
         EmptyProject -> []
         ConsProject col rest -> columnName col : makeSelectFields rest
 
-makeQueryConditionClause :: Condition cs -> String
-makeQueryConditionClause constr = case constr of
+makeConditionClause :: Condition cs -> String
+makeConditionClause constr = case constr of
   EmptyCondition -> "1=1" -- Can we put "True" ? or "true" ?
   -- We use a ? because query parameter substitution shall be done by another
   -- system, namely postgresql-simple.
   EqCondition col val -> concat [columnName col, " = ?"]
   LtCondition col val -> concat [columnName col, " < ?"]
   GtCondition col val -> concat [columnName col, " > ?"]
-  AndCondition left right -> concat [makeQueryConditionClause left, " AND ", makeQueryConditionClause right]
-  OrCondition left right -> concat [makeQueryConditionClause left, " OR ", makeQueryConditionClause right]
+  AndCondition left right -> concat [makeConditionClause left, " AND ", makeConditionClause right]
+  OrCondition left right -> concat [makeConditionClause left, " OR ", makeConditionClause right]
 
 data PostgresUniverse t where
     UText :: T.Text -> PostgresUniverse t
@@ -187,6 +187,15 @@ data PostgresUniverse t where
     UBool :: Bool -> PostgresUniverse t
     UNull :: () -> PostgresUniverse t
     UNullable :: Maybe (PostgresUniverse t) -> PostgresUniverse t
+
+instance Show (PostgresUniverse t) where
+  show u = case u of
+      UText t -> show t
+      UInt i -> show i
+      UDouble d -> show d
+      UBool b -> show b
+      UNull () -> show ()
+      UNullable mebe -> show mebe
 
 instance InUniverse PostgresUniverse T.Text where
   type UniverseType PostgresUniverse T.Text = T.Text
@@ -255,54 +264,22 @@ makeParametersFromCondition proxy cs = injects proxy lst
     lst :: HList (Snds conditions)
     lst = conditionValues cs
 
-makeParametersFromQuery
-  :: forall universe conditions selects .
-     ( Every (InUniverse universe) (Snds conditions)
-     )
-  => Proxy universe
-  -> Query selects conditions
-  -> HList (Fmap universe (Snds conditions))
-makeParametersFromQuery proxy (Query _ cs) = makeParametersFromCondition proxy cs
-
-makeParameters
-  :: ( Every (InUniverse universe) (Snds conditioned)
-     )
-  => Proxy universe
-  -> QueryOnTable selected conditioned available
-  -> HList (Fmap universe (Snds conditioned))
-makeParameters proxy q = case q of
-    QueryOnTable q _ -> makeParametersFromQuery proxy q
-
-postgresQueryOnTableRepresentation
-  :: forall universe conditioned selected available .
+postgresSelect
+  :: forall universe tableName conditioned selected available .
      ( Every (InUniverse universe) (Snds conditioned)
      , Every (PFF.FromField) (Fmap universe (Snds selected))
      , Every (PTF.ToField) (Fmap universe (Snds conditioned))
      , TypeList (Fmap universe (Snds selected))
      )
-  => QueryOnTable selected conditioned available
-  -> Proxy universe
+  => Select universe tableName selected conditioned available
   -> P.Connection
   -> IO [HList (Fmap universe (Snds selected))]
-postgresQueryOnTableRepresentation q proxy conn =
+postgresSelect select conn =
     let actualQuery :: P.Query
-        actualQuery = fromString (makeQuery q)
+        actualQuery = fromString (makeSelectQuery select)
         parameters :: HList (Fmap universe (Snds conditioned))
-        parameters = makeParameters (Proxy :: Proxy universe) q
+        parameters = makeParametersFromCondition (Proxy :: Proxy universe) (selectCondition select)
     in  P.query conn actualQuery parameters
-
-postgresSelect
-  :: forall universe conditioned selected available output .
-     ( Every (InUniverse universe) (Snds conditioned)
-     , Every (PFF.FromField) (Fmap universe (Snds selected))
-     , Every (PTF.ToField) (Fmap universe (Snds conditioned))
-     , TypeList (Fmap universe (Snds selected))
-     )
-  => Select universe selected conditioned available output
-  -> P.Connection
-  -> IO [output]
-postgresSelect (Select proxy qot f) conn =
-    (fmap . fmap) f (postgresQueryOnTableRepresentation qot proxy conn)
 
 postgresInsert
   :: forall universe sym schema .

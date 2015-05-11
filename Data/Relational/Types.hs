@@ -141,6 +141,11 @@ appendHList left right = case left of
         HNil -> left
         _ :> _ -> x :> (appendHList rest right)
 
+instance (Every Show types) => Show (HList types) where
+  show lst = case lst of
+      HNil -> "HNil"
+      x :> rest -> concat [show x, " :> ", show rest]
+
 class TypeList lst where
   typeListFoldr
     :: Every c lst
