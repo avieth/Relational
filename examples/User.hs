@@ -13,6 +13,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 import Data.Proxy
 import Data.Relational
@@ -60,7 +61,9 @@ ageColumn = Column (Proxy :: Proxy "age") (Proxy :: Proxy Age)
 userSchema :: Schema '[ '("username", Username) ]
 userSchema = userNameColumn .:| endSchema
 
-userProfileSchema :: Schema '[ '("username", Username), '("fullname", Fullname), '("age", Age) ]
+type UserProfileSchema = '[ '("username", Username), '("fullname", Fullname), '("age", Age) ]
+
+userProfileSchema :: Schema UserProfileSchema
 userProfileSchema = userNameColumn .:|  fullNameColumn .:| ageColumn .:| endSchema
 
 userTable :: Table "users" '[ '("username", Username) ]
@@ -73,7 +76,7 @@ fetchProfileForUsername uname =
     Select
       proxy
       queryOnTable
-      (\(username, fullname, age) ->  UserProfile (Username username) (Fullname fullname) (Age age))
+      convertToUserProfile
   where
     proxy :: Proxy PostgresUniverse
     proxy = Proxy
@@ -82,15 +85,39 @@ fetchProfileForUsername uname =
         Query
           (userNameColumn .+| fullNameColumn .+| ageColumn .+| nil)
           (userNameColumn .==. uname)
+    convertToUserProfile :: HList '[T.Text, T.Text, Int] -> UserProfile
+    convertToUserProfile hlist = case hlist of
+        username :> fullname :> age :> HNil -> UserProfile (Username username) (Fullname fullname) (Age age)
+{-
+selectUserProfile up =
+    Select
+      proxy
+      queryOnTable 
+      (\(username, fullname, age) ->  UserProfile (Username username) (Fullname fullname) (Age age))
+  where
+    proxy :: Proxy PostgresUniverse
+    proxy = Proxy
+    schema = userNameColumn .+| fullNameColumn .+| ageColumn .+| nil
+    queryOnTable = QueryOnTable queryByUsername userProfileTable
+    queryByUsername =
+        Query
+          (userNameColumn .+| fullNameColumn .+| ageColumn .+| nil)
+          (completeCharacterization schema )
+-}
 
 insertUserProfile (UserProfile username fullname age) =
     Insert
       proxy
       userProfileTable
-      (toRepresentation proxy username, toRepresentation proxy fullname, toRepresentation proxy age)
+      row
   where
     proxy :: Proxy PostgresUniverse
     proxy = Proxy
+    row :: HList '[ T.Text, T.Text, Int ]
+    row =    (toRepresentation proxy username)
+          :> (toRepresentation proxy fullname)
+          :> (toRepresentation proxy age)
+          :> HNil
 
 deleteUserProfile uname =
     Delete proxy userProfileTable (userNameColumn .==. uname)
@@ -99,18 +126,30 @@ deleteUserProfile uname =
     proxy = Proxy
 
 updateUserProfileUsername oldUsername newUsername =
-    Update proxy userProfileTable projection (userNameColumn .==. oldUsername) (Only (toRepresentation proxy newUsername))
+    Update proxy userProfileTable projection (userNameColumn .==. oldUsername) ((toRepresentation proxy newUsername) :> HNil)
   where
     proxy :: Proxy PostgresUniverse
     proxy = Proxy
     projection = userNameColumn .+| nil
 
+{-
+updateUserProfileFullnameAge
+  :: Username
+  -> Fullname
+  -> Age
+  -> Update PostgresUniverse "user_profiles" UserProfileSchema '[ '("fullname", Fullname), '("age", Age) ] '[ '("username", Username) ]
 updateUserProfileFullnameAge username newFullname newAge =
-    Update proxy userProfileTable projection (userNameColumn .==. username) (toRepresentation proxy newFullname, toRepresentation proxy newAge)
+    Update proxy userProfileTable projection (userNameColumn .==. username) columns
   where
     proxy :: Proxy PostgresUniverse
     proxy = Proxy
+    projection :: Project '[ '("fullname", Fullname), '("age", Age) ]
     projection = fullNameColumn .+| ageColumn .+| nil
+    columns :: HList '[ T.Text, Int ]
+    columns =    (toRepresentation proxy newFullname)
+              :> (toRepresentation proxy newAge)
+              :> HNil
+-}
 
 exampleSelect username = do
     conn <- P.connect (P.defaultConnectInfo { P.connectUser = "alex" })
@@ -130,6 +169,7 @@ exampleDelete username = do
     print i
     return ()
 
+{-
 exampleUpdate1 oldUsername newUsername = do
     conn <- P.connect (P.defaultConnectInfo { P.connectUser = "alex" })
     i <- postgresUpdate (updateUserProfileUsername oldUsername newUsername) conn
@@ -141,3 +181,4 @@ exampleUpdate2 username newFullname newAge = do
     i <- postgresUpdate (updateUserProfileFullnameAge username newFullname newAge) conn
     print i
     return ()
+-}
