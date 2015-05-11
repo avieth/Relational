@@ -11,6 +11,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE AutoDeriveTypeable #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
 
 module Data.Relational.Delete (
 
@@ -25,7 +26,7 @@ import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Condition
 
-data Delete universe sym schema conditioned where
+data Delete (universe :: * -> *) sym schema conditioned where
   Delete
     :: ( Subset conditioned schema ~ 'True
        )

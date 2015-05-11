@@ -25,16 +25,16 @@ import Data.Relational.Types
 import Data.Relational.Universe
 import Data.Relational.Table
 
-data Insert universe sym schema where
+data Insert (universe :: * -> *) sym schema where
   Insert
     :: ()
     => Proxy universe
     -> Table sym schema
-    -> HList (Fmap (Representation universe) (Snds schema))
+    -> HList (Snds schema)
     -> Insert universe sym schema
 
 insertTable :: Insert universe sym schema -> Table sym schema
 insertTable (Insert _ t _) = t
 
-insertRow :: Insert universe sym schema -> HList (Fmap (Representation universe) (Snds schema))
+insertRow :: Insert universe sym schema -> HList (Snds schema)
 insertRow (Insert _ _ r) = r

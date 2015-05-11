@@ -30,7 +30,7 @@ import Data.Relational.Table
 import Data.Relational.Project
 import Data.Relational.Condition
 
-data Update universe sym schema projected conditioned where
+data Update (universe :: * -> *) sym schema projected conditioned where
   Update
     :: ( Subset conditioned schema ~ 'True
        , SubsetUnique projected schema ~ 'True
@@ -41,7 +41,7 @@ data Update universe sym schema projected conditioned where
     -> Table sym schema
     -> Project projected
     -> Condition conditioned
-    -> HList (Fmap (Representation universe) (Snds projected))
+    -> HList (Snds projected)
     -- ^ The data to use in the update, corresponding to the columns isolated
     --   by the projection.
     -> Update universe sym schema projected conditioned
@@ -54,7 +54,7 @@ updateProject (Update _ _ p _ _) = p
 
 updateColumns
   :: Update universe sym schema projected conditioned
-  -> HList (Fmap (Representation universe) (Snds projected))
+  -> HList (Snds projected)
 updateColumns (Update _ _ _ _ r) = r
 
 updateCondition

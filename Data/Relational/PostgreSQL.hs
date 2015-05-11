@@ -22,6 +22,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Data.Relational.PostgreSQL (
 
@@ -30,7 +31,6 @@ module Data.Relational.PostgreSQL (
   , postgresInsert
   , postgresDelete
   , postgresUpdate
-  , makeUpdateStatement
 
   ) where
 
@@ -48,6 +48,37 @@ import qualified Data.Text as T
 import Data.Int (Int64)
 import Data.Relational
 import Unsafe.Coerce
+
+-- | Wrapper over the PostgreSQL-simple RowParser, so that we can make it
+--   work with HLists. The type parameter is a list of types.
+newtype RowParserL ts = RowParserL {
+    runRowParserL :: PFR.RowParser (HList ts)
+  }
+
+rowParserCons :: PFR.RowParser t -> RowParserL ts -> RowParserL (t ': ts)
+rowParserCons rp rpl = RowParserL (ConsHList <$> rp <*> (runRowParserL rpl))
+
+-- | To make a FromRow for an HList, we use the typeListFoldr mechanism from
+--   the TypeList class to produce a RowParserL (necessary in order to fit the
+--   type signature of typeListFoldr) and then we use that to produce the
+--   RowParser proper.
+instance (TypeList types, Every PFF.FromField types) => PFR.FromRow (HList types) where
+  fromRow = runRowParserL (typeListFoldr f (RowParserL (pure EmptyHList)) proxyList proxyConstraint)
+    where
+      proxyList :: Proxy types
+      proxyList = Proxy
+      proxyConstraint :: Proxy PFF.FromField
+      proxyConstraint = Proxy
+      f :: forall t ts . PFF.FromField t => Proxy t -> RowParserL ts -> RowParserL (t ': ts)
+      f proxyT rpl = rowParserCons PFR.field rpl
+
+-- After that FromRow instance, the ToRow instance is a big relief.
+
+instance (Every PTF.ToField types) => PTR.ToRow (HList types) where
+  toRow lst = case lst of
+      EmptyHList -> []
+      ConsHList v rest -> PTF.toField v : PTR.toRow rest
+
 
 makeInsertStatement :: Insert universe sym schema -> String
 makeInsertStatement insert =
@@ -149,155 +180,125 @@ makeQueryConditionClause constr = case constr of
   AndCondition left right -> concat [makeQueryConditionClause left, " AND ", makeQueryConditionClause right]
   OrCondition left right -> concat [makeQueryConditionClause left, " OR ", makeQueryConditionClause right]
 
-data PostgresUniverse where
-    UText :: T.Text -> PostgresUniverse
-    -- TODO use Text.
-    UInt :: Int -> PostgresUniverse
-    UDouble :: Double -> PostgresUniverse
-    UBool :: Bool -> PostgresUniverse
-    UNull :: PostgresUniverse
-  deriving Show
+data PostgresUniverse t where
+    UText :: T.Text -> PostgresUniverse t
+    UInt :: Int -> PostgresUniverse t
+    UDouble :: Double -> PostgresUniverse t
+    UBool :: Bool -> PostgresUniverse t
+    UNull :: () -> PostgresUniverse t
+    UNullable :: Maybe (PostgresUniverse t) -> PostgresUniverse t
 
 instance InUniverse PostgresUniverse T.Text where
-  type Representation PostgresUniverse T.Text = T.Text
-  toUniverse _ _ = UText
-  toRepresentation _ = id
-  fromRepresentation _ = Just
+  type UniverseType PostgresUniverse T.Text = T.Text
+  toUniverse proxy = UText
+  fromUniverse proxy (UText t) = Just t
+  toUniverse' proxy t = UText t
 
 instance InUniverse PostgresUniverse Int where
-  type Representation PostgresUniverse Int = Int
-  toUniverse _ _ = UInt
-  toRepresentation _ = id
-  fromRepresentation _ = Just
+  type UniverseType PostgresUniverse Int = Int
+  toUniverse proxy = UInt
+  fromUniverse proxy (UInt i) = Just i
+  toUniverse' proxy i = UInt i
 
 instance InUniverse PostgresUniverse Double where
-  type Representation PostgresUniverse Double = Double
-  toUniverse _ _ = UDouble
-  toRepresentation _ = id
-  fromRepresentation _ = Just
+  type UniverseType PostgresUniverse Double = Double
+  toUniverse proxy = UDouble
+  fromUniverse proxy (UDouble d) = Just d
+  toUniverse' proxy d = UDouble d
 
 instance InUniverse PostgresUniverse Bool where
-  type Representation PostgresUniverse Bool = Bool
-  toUniverse _ _ = UBool
-  toRepresentation _ = id
-  fromRepresentation _ = Just
+  type UniverseType PostgresUniverse Bool = Bool
+  toUniverse proxy = UBool
+  fromUniverse proxy (UBool b) = Just b
+  toUniverse' proxy b = UBool b
 
+{-
 instance InUniverse PostgresUniverse a => InUniverse PostgresUniverse (Maybe a) where
-  type Representation PostgresUniverse (Maybe a) = Maybe (Representation PostgresUniverse a)
-  toUniverse proxy1 proxy2 mebe = case mebe of
-      Nothing -> UNull
-      Just x -> toUniverse proxy1 (Proxy :: Proxy a) x
-  toRepresentation proxy = fmap (toRepresentation proxy)
-  fromRepresentation proxy x = case x of
-      Nothing -> Just Nothing
-      Just y -> case fromRepresentation proxy y of
-          Nothing -> Nothing
-          Just z -> Just (Just z)
+  type UniverseType PostgresUniverse (Maybe a) = Maybe (UniverseType PostgresUniverse a)
+  toUniverse proxy = UNullable . fmap (toUniverse proxy)
+  fromUniverse proxy (UNullable x) = fmap (fromUniverse (Proxy :: Proxy a)) x
+-}
 
-instance PTF.ToField PostgresUniverse where
+instance PTF.ToField (PostgresUniverse t) where
   toField u = case u of
       UText str -> PTF.toField str
       UInt i -> PTF.toField i
       UDouble d -> PTF.toField d
       UBool b -> PTF.toField b
-      UNull -> PTF.toField PT.Null
+      UNull () -> PTF.toField PT.Null
+      UNullable mebe -> PTF.toField mebe
 
--- | Wrapper over the PostgreSQL-simple RowParser, so that we can make it
---   work with HLists. The type parameter is a list of types.
-newtype RowParserL ts = RowParserL {
-    runRowParserL :: PFR.RowParser (HList ts)
-  }
-
-rowParserCons :: PFR.RowParser t -> RowParserL ts -> RowParserL (t ': ts)
-rowParserCons rp rpl = RowParserL (ConsHList <$> rp <*> (runRowParserL rpl))
-
-data HasFromField t where
-  HasFromField :: PFF.FromField t => Proxy t -> HasFromField t
-
--- | To make a FromRow for an HList, we use the typeListFoldr mechanism from
---   the TypeList class to produce a RowParserL (necessary in order to fit the
---   type signature of typeListFoldr) and then we use that to produce the
---   RowParser proper.
-instance (TypeList types, Every PFF.FromField types) => PFR.FromRow (HList types) where
-  fromRow = runRowParserL (typeListFoldr f (RowParserL (pure EmptyHList)) proxyList proxyConstraint)
-    where
-      proxyList :: Proxy types
-      proxyList = Proxy
-      proxyConstraint :: Proxy PFF.FromField
-      proxyConstraint = Proxy
-      f :: forall t ts . PFF.FromField t => Proxy t -> RowParserL ts -> RowParserL (t ': ts)
-      f proxyT rpl = rowParserCons PFR.field rpl
-
--- After that FromRow instance, the ToRow instance is a big relief.
-
-instance (Every PTF.ToField types) => PTR.ToRow (HList types) where
-  toRow lst = case lst of
-      EmptyHList -> []
-      ConsHList v rest -> PTF.toField v : PTR.toRow rest
+instance (InUniverse PostgresUniverse t, PFF.FromField (UniverseType PostgresUniverse t)) => PFF.FromField (PostgresUniverse t) where
+  fromField = let otherParser :: PFF.FieldParser (UniverseType PostgresUniverse t)
+                  otherParser = PFF.fromField
+              in  \field bytestring -> fmap (toUniverse' (Proxy :: Proxy PostgresUniverse)) (otherParser field bytestring)
 
 injects
-  :: ( Every (InUniverse u) types
+  :: ( Every (InUniverse universe) types
      )
-  => Proxy u
+  => Proxy universe
   -> HList types
-  -> [u]
+  -> HList (Fmap universe types)
 injects proxy lst = case lst of
-    EmptyHList -> []
-    ConsHList x rest -> (directToUniverse proxy x) : (injects proxy rest)
-
-makeParametersFromQuery
-  :: forall u conditions selects .
-     ( Every (InUniverse u) (Snds conditions)
-     )
-  => Query selects conditions
-  -> [u]
-makeParametersFromQuery (Query _ cs) = makeParametersFromCondition cs
-
-makeParameters
-  :: ( Every (InUniverse u) (Snds conditioned)
-     )
-  => QueryOnTable selected conditioned available
-  -> [u]
-makeParameters q = case q of
-    QueryOnTable q _ -> makeParametersFromQuery q
+    HNil -> HNil
+    x :> xs -> (toUniverse proxy x) :> (injects proxy xs)
 
 makeParametersFromCondition
   :: forall universe conditions .
      ( Every (InUniverse universe) (Snds conditions)
      )
-  => Condition conditions
-  -> [universe]
-makeParametersFromCondition cs = injects (Proxy :: Proxy universe) lst
+  => Proxy universe
+  -> Condition conditions
+  -> HList (Fmap universe (Snds conditions))
+makeParametersFromCondition proxy cs = injects proxy lst
   where
     lst :: HList (Snds conditions)
     lst = conditionValues cs
 
+makeParametersFromQuery
+  :: forall universe conditions selects .
+     ( Every (InUniverse universe) (Snds conditions)
+     )
+  => Proxy universe
+  -> Query selects conditions
+  -> HList (Fmap universe (Snds conditions))
+makeParametersFromQuery proxy (Query _ cs) = makeParametersFromCondition proxy cs
+
+makeParameters
+  :: ( Every (InUniverse universe) (Snds conditioned)
+     )
+  => Proxy universe
+  -> QueryOnTable selected conditioned available
+  -> HList (Fmap universe (Snds conditioned))
+makeParameters proxy q = case q of
+    QueryOnTable q _ -> makeParametersFromQuery proxy q
+
 postgresQueryOnTableRepresentation
-  :: forall u conditioned selected available .
-     ( Every (InUniverse u) (Snds conditioned)
-     , Every (PFF.FromField) (Fmap (Representation u) (Snds selected))
-     , PTF.ToField u
-     , TypeList (Fmap (Representation u) (Snds selected))
+  :: forall universe conditioned selected available .
+     ( Every (InUniverse universe) (Snds conditioned)
+     , Every (PFF.FromField) (Fmap universe (Snds selected))
+     , Every (PTF.ToField) (Fmap universe (Snds conditioned))
+     , TypeList (Fmap universe (Snds selected))
      )
   => QueryOnTable selected conditioned available
-  -> Proxy u
+  -> Proxy universe
   -> P.Connection
-  -> IO [HList (Fmap (Representation u) (Snds selected))]
+  -> IO [HList (Fmap universe (Snds selected))]
 postgresQueryOnTableRepresentation q proxy conn =
     let actualQuery :: P.Query
         actualQuery = fromString (makeQuery q)
-        parameters :: [u]
-        parameters = makeParameters q
+        parameters :: HList (Fmap universe (Snds conditioned))
+        parameters = makeParameters (Proxy :: Proxy universe) q
     in  P.query conn actualQuery parameters
 
 postgresSelect
-  :: forall u conditioned selected available output .
-     ( Every (InUniverse u) (Snds conditioned)
-     , Every (PFF.FromField) (Fmap (Representation u) (Snds selected))
-     , PTF.ToField u
-     , TypeList (Fmap (Representation u) (Snds selected))
+  :: forall universe conditioned selected available output .
+     ( Every (InUniverse universe) (Snds conditioned)
+     , Every (PFF.FromField) (Fmap universe (Snds selected))
+     , Every (PTF.ToField) (Fmap universe (Snds conditioned))
+     , TypeList (Fmap universe (Snds selected))
      )
-  => Select u selected conditioned available output
+  => Select universe selected conditioned available output
   -> P.Connection
   -> IO [output]
 postgresSelect (Select proxy qot f) conn =
@@ -305,7 +306,8 @@ postgresSelect (Select proxy qot f) conn =
 
 postgresInsert
   :: forall universe sym schema .
-     ( Every (PTF.ToField) (Fmap (Representation universe) (Snds schema))
+     ( Every (PTF.ToField) (Fmap universe (Snds schema))
+     , Every (InUniverse universe) (Snds schema)
      )
   => Insert universe sym schema
   -> P.Connection
@@ -313,14 +315,14 @@ postgresInsert
 postgresInsert insert conn =
     let statement :: P.Query
         statement = fromString (makeInsertStatement insert)
-        parameters :: HList (Fmap (Representation universe) (Snds schema))
-        parameters = insertRow insert
+        parameters :: HList (Fmap universe (Snds schema))
+        parameters = allToUniverse (Proxy :: Proxy universe) (insertRow insert)
     in  P.execute conn statement parameters
 
 postgresDelete
   :: forall universe tableName schema conditioned .
      ( Every (InUniverse universe) (Snds conditioned)
-     , PTF.ToField universe
+     , Every (PTF.ToField) (Fmap universe (Snds conditioned))
      )
   => Delete universe tableName schema conditioned
   -> P.Connection
@@ -328,23 +330,28 @@ postgresDelete
 postgresDelete delete conn =
     let statement :: P.Query
         statement = fromString (makeDeleteStatement delete)
-        parameters :: [universe]
-        parameters = makeParametersFromCondition (deleteCondition delete)
+        parameters :: HList (Fmap universe (Snds conditioned))
+        parameters = makeParametersFromCondition (Proxy :: Proxy universe) (deleteCondition delete)
     in  P.execute conn statement parameters
 
 postgresUpdate
   :: forall universe tableName schema projected conditioned .
      ( Every (InUniverse universe) (Snds conditioned)
-     , Every (PTF.ToField) (Fmap (Representation universe) (Snds projected))
-     , PTF.ToField universe
+     , Every (InUniverse universe) (Snds projected)
+     , Every (PTF.ToField) (Fmap universe (Snds conditioned))
+     , Every (PTF.ToField) (Fmap universe (Snds projected))
      )
   => Update universe tableName schema projected conditioned
   -> P.Connection
   -> IO Int64
 postgresUpdate update conn =
-    let statement :: P.Query
+    let universeProxy :: Proxy universe
+        universeProxy = Proxy
+        statement :: P.Query
         statement = fromString (makeUpdateStatement update)
-        conditionParameters :: [universe]
-        conditionParameters = makeParametersFromCondition (updateCondition update)
-        parameters = (updateColumns update) PT.:. conditionParameters
+        conditionParameters :: HList (Fmap universe (Snds conditioned))
+        conditionParameters = makeParametersFromCondition universeProxy (updateCondition update)
+        assignmentParameters :: HList (Fmap universe (Snds projected))
+        assignmentParameters = allToUniverse universeProxy (updateColumns update)
+        parameters = assignmentParameters PT.:. conditionParameters
     in  P.execute conn statement parameters
