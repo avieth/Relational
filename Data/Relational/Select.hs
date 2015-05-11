@@ -33,5 +33,6 @@ data Select universe selected constrained available output where
   Select
     :: Proxy universe
     -> QueryOnTable selected constrained available
-    -> (RowTuple (Fmap (Representation universe) (Snds selected)) -> t)
+    -> (HList (Fmap (Representation universe) (Snds selected)) -> t)
+    -- TODO should not have this function; should meld QueryOnTable into this.
     -> Select universe selected constrained available t

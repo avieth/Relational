@@ -23,6 +23,8 @@ in the repository.
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Data.Relational.Types (
 
@@ -42,13 +44,15 @@ module Data.Relational.Types (
   , Every
   , Fmap
   , HList(..)
+  , pattern HNil
+  , pattern (:>)
   , appendHList
-  , Only(..)
-  , RowTuple
+  , TypeList(..)
 
   ) where
 
 import GHC.Exts (Constraint)
+import Data.Proxy
 
 type family NewElement (s :: k) (ss :: [k]) :: Bool where
   NewElement s '[] = 'True
@@ -125,25 +129,35 @@ data HList :: [*] -> * where
   EmptyHList :: HList '[]
   ConsHList :: t -> HList ts -> HList (t ': ts)
 
+pattern HNil = EmptyHList
+pattern x :> rest = ConsHList x rest
+
+infixr 9 :>
+
 appendHList :: HList xs -> HList ys -> HList (Append xs ys)
 appendHList left right = case left of
-    EmptyHList -> right
-    ConsHList x rest -> case right of
-        EmptyHList -> left
-        ConsHList _ _ -> ConsHList x (appendHList rest right)
+    HNil -> right
+    x :> rest -> case right of
+        HNil -> left
+        _ :> _ -> x :> (appendHList rest right)
 
-newtype Only a = Only { fromOnly :: a }
-  deriving (Eq, Ord, Read, Show, Functor)
+class TypeList lst where
+  typeListFoldr
+    :: Every c lst
+    => (forall t ts . c t => Proxy t -> a ts -> a (t ': ts))
+    -> a '[]
+    -> Proxy lst
+    -> Proxy c
+    -> a lst
 
-type family RowTuple (xs :: [*]) :: * where
-  RowTuple '[] = ()
-  RowTuple '[a] = Only a
-  RowTuple '[a,b] = (a,b)
-  RowTuple '[a,b,c] = (a,b,c)
-  RowTuple '[a,b,c,d] = (a,b,c,d)
-  RowTuple '[a,b,c,d,e] = (a,b,c,d,e)
-  RowTuple '[a,b,c,d,e,f] = (a,b,c,d,e,f)
-  RowTuple '[a,b,c,d,e,f,g] = (a,b,c,d,e,f,g)
-  RowTuple '[a,b,c,d,e,f,g,h] = (a,b,c,d,e,f,g,h)
-  RowTuple '[a,b,c,d,e,f,g,h,i] = (a,b,c,d,e,f,g,h,i)
-  RowTuple '[a,b,c,d,e,f,g,h,i,j] = (a,b,c,d,e,f,g,h,i,j)
+instance TypeList '[] where
+  typeListFoldr f b proxyList proxyConstraint = b
+
+instance TypeList ts => TypeList (t ': ts) where
+  typeListFoldr f b proxy proxyConstraint =
+      f proxyHead (typeListFoldr f b proxyTail proxyConstraint)
+    where
+      proxyHead :: Proxy t
+      proxyHead = Proxy
+      proxyTail :: Proxy ts
+      proxyTail = Proxy

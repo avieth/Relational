@@ -34,6 +34,7 @@ module Data.Relational.PostgreSQL (
 
   ) where
 
+import Control.Applicative
 import Data.Proxy
 import Data.List (intersperse)
 import Data.String (fromString)
@@ -46,6 +47,7 @@ import qualified Database.PostgreSQL.Simple.FromRow as PFR
 import qualified Data.Text as T
 import Data.Int (Int64)
 import Data.Relational
+import Unsafe.Coerce
 
 makeInsertStatement :: Insert universe sym schema -> String
 makeInsertStatement insert =
@@ -200,11 +202,38 @@ instance PTF.ToField PostgresUniverse where
       UBool b -> PTF.toField b
       UNull -> PTF.toField PT.Null
 
-instance (PFF.FromField a) => PFR.FromRow (Only a) where
-  fromRow = fmap Only PFR.field
+-- | Wrapper over the PostgreSQL-simple RowParser, so that we can make it
+--   work with HLists. The type parameter is a list of types.
+newtype RowParserL ts = RowParserL {
+    runRowParserL :: PFR.RowParser (HList ts)
+  }
 
-instance (PTF.ToField a) => PTR.ToRow (Only a) where
-    toRow (Only v) = [PTF.toField v]
+rowParserCons :: PFR.RowParser t -> RowParserL ts -> RowParserL (t ': ts)
+rowParserCons rp rpl = RowParserL (ConsHList <$> rp <*> (runRowParserL rpl))
+
+data HasFromField t where
+  HasFromField :: PFF.FromField t => Proxy t -> HasFromField t
+
+-- | To make a FromRow for an HList, we use the typeListFoldr mechanism from
+--   the TypeList class to produce a RowParserL (necessary in order to fit the
+--   type signature of typeListFoldr) and then we use that to produce the
+--   RowParser proper.
+instance (TypeList types, Every PFF.FromField types) => PFR.FromRow (HList types) where
+  fromRow = runRowParserL (typeListFoldr f (RowParserL (pure EmptyHList)) proxyList proxyConstraint)
+    where
+      proxyList :: Proxy types
+      proxyList = Proxy
+      proxyConstraint :: Proxy PFF.FromField
+      proxyConstraint = Proxy
+      f :: forall t ts . PFF.FromField t => Proxy t -> RowParserL ts -> RowParserL (t ': ts)
+      f proxyT rpl = rowParserCons PFR.field rpl
+
+-- After that FromRow instance, the ToRow instance is a big relief.
+
+instance (Every PTF.ToField types) => PTR.ToRow (HList types) where
+  toRow lst = case lst of
+      EmptyHList -> []
+      ConsHList v rest -> PTF.toField v : PTR.toRow rest
 
 injects
   :: ( Every (InUniverse u) types
@@ -248,12 +277,12 @@ postgresQueryOnTableRepresentation
      ( Every (InUniverse u) (Snds conditioned)
      , Every (PFF.FromField) (Fmap (Representation u) (Snds selected))
      , PTF.ToField u
-     , P.FromRow (RowTuple (Fmap (Representation u) (Snds selected)))
+     , TypeList (Fmap (Representation u) (Snds selected))
      )
   => QueryOnTable selected conditioned available
   -> Proxy u
   -> P.Connection
-  -> IO [RowTuple (Fmap (Representation u) (Snds selected))]
+  -> IO [HList (Fmap (Representation u) (Snds selected))]
 postgresQueryOnTableRepresentation q proxy conn =
     let actualQuery :: P.Query
         actualQuery = fromString (makeQuery q)
@@ -266,7 +295,7 @@ postgresSelect
      ( Every (InUniverse u) (Snds conditioned)
      , Every (PFF.FromField) (Fmap (Representation u) (Snds selected))
      , PTF.ToField u
-     , P.FromRow (RowTuple (Fmap (Representation u) (Snds selected)))
+     , TypeList (Fmap (Representation u) (Snds selected))
      )
   => Select u selected conditioned available output
   -> P.Connection
@@ -276,7 +305,7 @@ postgresSelect (Select proxy qot f) conn =
 
 postgresInsert
   :: forall universe sym schema .
-     ( P.ToRow (RowTuple (Fmap (Representation universe) (Snds schema)))
+     ( Every (PTF.ToField) (Fmap (Representation universe) (Snds schema))
      )
   => Insert universe sym schema
   -> P.Connection
@@ -284,8 +313,8 @@ postgresInsert
 postgresInsert insert conn =
     let statement :: P.Query
         statement = fromString (makeInsertStatement insert)
-        parameters :: RowTuple (Fmap (Representation universe) (Snds schema))
-        parameters = insertRowTuple insert
+        parameters :: HList (Fmap (Representation universe) (Snds schema))
+        parameters = insertRow insert
     in  P.execute conn statement parameters
 
 postgresDelete
@@ -303,13 +332,10 @@ postgresDelete delete conn =
         parameters = makeParametersFromCondition (deleteCondition delete)
     in  P.execute conn statement parameters
 
--- For update we must use two sources for the parameters!
--- How to handle this?
--- The issue is taking the RowTuple and converting it to a [universe].
 postgresUpdate
   :: forall universe tableName schema projected conditioned .
      ( Every (InUniverse universe) (Snds conditioned)
-     , P.ToRow (RowTuple (Fmap (Representation universe) (Snds projected)))
+     , Every (PTF.ToField) (Fmap (Representation universe) (Snds projected))
      , PTF.ToField universe
      )
   => Update universe tableName schema projected conditioned
@@ -318,9 +344,7 @@ postgresUpdate
 postgresUpdate update conn =
     let statement :: P.Query
         statement = fromString (makeUpdateStatement update)
-        --assignmentParameters :: [universe]
-        --assignmentParameters = makeParametersFromRowTuple (updateRowTuple update)
         conditionParameters :: [universe]
         conditionParameters = makeParametersFromCondition (updateCondition update)
-        parameters = (updateRowTuple update) PT.:. conditionParameters
+        parameters = (updateColumns update) PT.:. conditionParameters
     in  P.execute conn statement parameters

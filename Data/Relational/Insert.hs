@@ -16,7 +16,7 @@ module Data.Relational.Insert (
 
     Insert(..)
   , insertTable
-  , insertRowTuple
+  , insertRow
 
   ) where
 
@@ -30,11 +30,11 @@ data Insert universe sym schema where
     :: ()
     => Proxy universe
     -> Table sym schema
-    -> RowTuple (Fmap (Representation universe) (Snds schema))
+    -> HList (Fmap (Representation universe) (Snds schema))
     -> Insert universe sym schema
 
 insertTable :: Insert universe sym schema -> Table sym schema
 insertTable (Insert _ t _) = t
 
-insertRowTuple :: Insert universe sym schema -> RowTuple (Fmap (Representation universe) (Snds schema))
-insertRowTuple (Insert _ _ r) = r
+insertRow :: Insert universe sym schema -> HList (Fmap (Representation universe) (Snds schema))
+insertRow (Insert _ _ r) = r

@@ -18,7 +18,7 @@ module Data.Relational.Update (
     Update(..)
   , updateTable
   , updateProject
-  , updateRowTuple
+  , updateColumns
   , updateCondition
 
   ) where
@@ -41,7 +41,7 @@ data Update universe sym schema projected conditioned where
     -> Table sym schema
     -> Project projected
     -> Condition conditioned
-    -> RowTuple (Fmap (Representation universe) (Snds projected))
+    -> HList (Fmap (Representation universe) (Snds projected))
     -- ^ The data to use in the update, corresponding to the columns isolated
     --   by the projection.
     -> Update universe sym schema projected conditioned
@@ -52,10 +52,10 @@ updateTable (Update _ t _ _ _) = t
 updateProject :: Update universe sym schema projected conditioned -> Project projected
 updateProject (Update _ _ p _ _) = p
 
-updateRowTuple
+updateColumns
   :: Update universe sym schema projected conditioned
-  -> RowTuple (Fmap (Representation universe) (Snds projected))
-updateRowTuple (Update _ _ _ _ r) = r
+  -> HList (Fmap (Representation universe) (Snds projected))
+updateColumns (Update _ _ _ _ r) = r
 
 updateCondition
   :: Update universe sym schema projected conditioned
