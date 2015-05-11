@@ -73,19 +73,18 @@ userTable = Table (Proxy :: Proxy "users") userSchema
 userProfileTable :: Table "user_profiles" '[ '("username", Username), '("fullname", Fullname), '("age", Age) ]
 userProfileTable = Table (Proxy :: Proxy "user_profiles") userProfileSchema
 
-fetchProfileForUsername uname =
+selectProfileForUsername uname =
     Select
       proxy
-      queryOnTable
-      convertToUserProfile
+      userProfileTable
+      projection
+      condition
   where
     proxy :: Proxy PostgresUniverse
     proxy = Proxy
-    queryOnTable = QueryOnTable queryByUsername userProfileTable
-    queryByUsername =
-        Query
-          (userNameColumn .+| fullNameColumn .+| ageColumn .+| nil)
-          (userNameColumn .==. uname)
+    projection = userNameColumn .+| fullNameColumn .+| ageColumn .+| nil
+    condition = userNameColumn .==. uname
+    {-
     convertToUserProfile :: HList '[PostgresUniverse Username, PostgresUniverse Fullname, PostgresUniverse Age] -> Maybe UserProfile
     convertToUserProfile hlist = case hlist of
         username :> fullname :> age :> HNil ->
@@ -96,10 +95,11 @@ fetchProfileForUsername uname =
                 proxyAge :: Proxy age
                 proxyAge = Proxy
             in  UserProfile <$> fromUniverse proxyUsername username <*> fromUniverse proxyFullname fullname <*> fromUniverse proxyAge age
+    -}
 
 exampleSelect username = do
     conn <- P.connect (P.defaultConnectInfo { P.connectUser = "alex" })
-    rows <- postgresSelect (fetchProfileForUsername username) conn
+    rows <- postgresSelect (selectProfileForUsername username) conn
     print rows
     return ()
 
