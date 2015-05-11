@@ -28,12 +28,15 @@ module Data.Relational.Condition (
   , (.&&.)
   , (.||.)
 
+  , completeCharacterization
+
   ) where
 
 import GHC.TypeLits
 import Unsafe.Coerce
-import Data.Relational.Column
 import Data.Relational.Types
+import Data.Relational.Column
+import Data.Relational.Schema
 
 -- | A condition on a query: disjunction, conjunction, equality, ordering.
 data Condition :: [(Symbol, *)] -> * where
@@ -85,3 +88,15 @@ infixr 8 .>.
 
 (.||.) :: Condition cs -> Condition cs' -> Condition (Append cs cs')
 (.||.) = OrCondition
+
+completeCharacterization :: Schema schema -> HList (Snds schema) -> Condition schema
+completeCharacterization sch row = case (sch, row) of
+    (EmptySchema, EmptyHList) -> EmptyCondition
+    -- unsafeCoerce is used here because I cannot figure out how to convince GHC
+    -- that
+    --
+    --   ___________________________________________
+    --   Append '[ '(sym, t) ] lst ~ ('(sym, t) : lst)
+    --
+    (ConsSchema col rest, ConsHList x rest') ->
+        unsafeCoerce $ AndCondition (EqCondition col x) (completeCharacterization rest rest')
