@@ -74,25 +74,25 @@ With a user profile table in hand, we can define reads and mutations on it.
 >        -- ^ The table from which we select.
 >        UserProfileSchema
 >        -- ^ The columns onto which we project.
->        '[UsernameColumn]
+>        '[ '[ UsernameColumn ] ]
 >        -- ^ The columns against which we condition (WHERE clause).
 > selectProfileByUsername uname =
 >     Select
 >       userProfileTable
 >       (usernameColumn :+| fullnameColumn :+| birthdayColumn :+| EndProject)
->       (usernameColumn .==. uname)
+>       (((usernameColumn .==. uname) .||. false) .&&. true)
 >
 > selectProfileByBirthday
 >   :: Birthday
 >   -> Select
 >        UserProfileTable
 >        UserProfileSchema
->        '[BirthdayColumn]
+>        '[ '[ BirthdayColumn ] ]
 > selectProfileByBirthday birthday =
 >     Select
 >       userProfileTable
 >       (usernameColumn :+| fullnameColumn :+| birthdayColumn :+| EndProject)
->       (birthdayColumn .==. birthday)
+>       (((birthdayColumn .==. birthday) .||. false) .&&. true)
 
 The Select constructor rules out many bad queries: every column in the
 projection (second type parameter) and condition (third type parameter)
@@ -116,12 +116,12 @@ condition.
 >   -> Select
 >        UserProfileTable
 >        projection
->        '[BirthdayColumn, BirthdayColumn]
+>        '[ '[ BirthdayColumn, BirthdayColumn ] ]
 > selectProfileBornBefore projection birthday =
 >     Select
 >       userProfileTable
 >       projection
->       ((birthdayColumn .<. birthday) .||. (birthdayColumn .==. birthday))
+>       (((birthdayColumn .<. birthday) .||. (birthdayColumn .==. birthday) .||. false) .&&. true)
 >
 > insertUserProfile :: UserProfile -> Insert UserProfileTable
 > insertUserProfile (UserProfile username fullname birthday) =
@@ -129,15 +129,15 @@ condition.
 >       userProfileTable
 >       (username :> fullname :> birthday :> HNil)
 >
-> deleteUserProfile :: UserProfile -> Delete UserProfileTable UserProfileSchema
+> deleteUserProfile :: UserProfile -> Delete UserProfileTable (FmapSingletonList UserProfileSchema)
 > deleteUserProfile (UserProfile username fullname birthday) =
 >     Delete
 >       userProfileTable
->       (eqUsername .&&. eqFullname .&&. eqBirthday)
+>       (eqUsername .&&. eqFullname .&&. eqBirthday .&&. true)
 >   where
->     eqUsername = usernameColumn .==. username
->     eqFullname = fullnameColumn .==. fullname
->     eqBirthday = birthdayColumn .==. birthday
+>     eqUsername = (usernameColumn .==. username) .||. false
+>     eqFullname = (fullnameColumn .==. fullname) .||. false
+>     eqBirthday = (birthdayColumn .==. birthday) .||. false
 >
 > updateUserProfile
 >   :: Username
@@ -147,13 +147,13 @@ condition.
 >        UserProfileTable
 >        '[ FullnameColumn, BirthdayColumn ]
 >        -- ^ Columns to update.
->        '[ UsernameColumn ]
+>        '[ '[ UsernameColumn ] ]
 >        -- ^ Columns conditioned against.
 > updateUserProfile username newFullname newBirthday =
 >     Update
 >       userProfileTable
 >       (fullnameColumn :+| birthdayColumn :+| EndProject)
->       (usernameColumn .==. username)
+>       (((usernameColumn .==. username) .||. false) .&&. true)
 >       (newFullname :> newBirthday :> HNil)
 
 In order to use the above definitions with an actual database, we need to
