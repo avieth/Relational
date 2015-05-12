@@ -114,11 +114,11 @@ conditionValueTerminal terminal = case terminal of
     LtCondition field -> fieldValue field :> HNil
     GtCondition field -> fieldValue field :> HNil
 
-infixr 9 .&&.
-infixr 9 .||.
-infixr 8 .==.
-infixr 8 .<.
-infixr 8 .>.
+infixr 7 .&&.
+infixr 8 .||.
+infixr 9 .==.
+infixr 9 .<.
+infixr 9 .>.
 
 (.==.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
 (.==.) (Column proxy _) x = EqCondition (Field proxy x)
