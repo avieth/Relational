@@ -27,16 +27,35 @@ module Data.Relational.Universe (
 import Data.Proxy
 import Data.Relational.Types
 
--- | @InUniverse u s@ means that @s@ is in the universe @u@, as witnessed by
---   the class functions.
+-- | Associate some type @s@ with a universe @u@ by providing an injection
+--   from @s@ into @u s@. This must really be an injection, so that
 --
---   TODO MUST DOCUMENT. This is confusing even to me, the author.
+--     @
+--       fromUniverse proxyS . toUniverse proxyU = Just
+--     @
+--
+--   The associated type @UniverseType u s@ and @toUniverseAssociated@
+--   allow for another way to create something of type @u s@. There must be
+--   a bijection between @UniverseType u s@ and @u s@. 
+--
+--     @
+--       s  |--->  u s  <--->  UniverseType u s
+--     @
+--
+--   This gives an injection from @s@ into @UniverseType u s@, namely
+--   @fromUniverseAssociated . toUniverse proxyU@ with inverse
+--   @fromUniverse proxyS . toUniverseAssociated proxyU@.
+--
+--   Why bother? Because we can use @u@ with the type family @Fmap@ in
+--   expressions like @HList (Fmap u types)@, as seen in the function
+--   @allToUniverse@. Functions with domain @forall t . u t@ can then be
+--   used on every element of the list.
 class InUniverse (u :: * -> *) (s :: *) where
-  type UniverseType u s :: *
   toUniverse :: Proxy u -> s -> u s
   fromUniverse :: Proxy s -> u s -> Maybe s
-  toUniverse' :: Proxy u -> UniverseType u s -> u s
-  -- TODO Must rename this one, but cannot think of a good name.
+  type UniverseType u s :: *
+  toUniverseAssociated :: Proxy u -> UniverseType u s -> u s
+  fromUniverseAssociated :: u s -> UniverseType u s
 
 allToUniverse
   :: forall universe types .

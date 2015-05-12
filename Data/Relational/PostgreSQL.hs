@@ -201,25 +201,29 @@ instance InUniverse PostgresUniverse T.Text where
   type UniverseType PostgresUniverse T.Text = T.Text
   toUniverse proxy = UText
   fromUniverse proxy (UText t) = Just t
-  toUniverse' proxy t = UText t
+  toUniverseAssociated proxy t = UText t
+  fromUniverseAssociated (UText t) = t
 
 instance InUniverse PostgresUniverse Int where
   type UniverseType PostgresUniverse Int = Int
   toUniverse proxy = UInt
   fromUniverse proxy (UInt i) = Just i
-  toUniverse' proxy i = UInt i
+  toUniverseAssociated proxy i = UInt i
+  fromUniverseAssociated (UInt i) = i
 
 instance InUniverse PostgresUniverse Double where
   type UniverseType PostgresUniverse Double = Double
   toUniverse proxy = UDouble
   fromUniverse proxy (UDouble d) = Just d
-  toUniverse' proxy d = UDouble d
+  toUniverseAssociated proxy d = UDouble d
+  fromUniverseAssociated (UDouble d) = d
 
 instance InUniverse PostgresUniverse Bool where
   type UniverseType PostgresUniverse Bool = Bool
   toUniverse proxy = UBool
   fromUniverse proxy (UBool b) = Just b
-  toUniverse' proxy b = UBool b
+  toUniverseAssociated proxy b = UBool b
+  fromUniverseAssociated (UBool b) = b
 
 {-
 instance InUniverse PostgresUniverse a => InUniverse PostgresUniverse (Maybe a) where
@@ -240,7 +244,7 @@ instance PTF.ToField (PostgresUniverse t) where
 instance (InUniverse PostgresUniverse t, PFF.FromField (UniverseType PostgresUniverse t)) => PFF.FromField (PostgresUniverse t) where
   fromField = let otherParser :: PFF.FieldParser (UniverseType PostgresUniverse t)
                   otherParser = PFF.fromField
-              in  \field bytestring -> fmap (toUniverse' (Proxy :: Proxy PostgresUniverse)) (otherParser field bytestring)
+              in  \field bytestring -> fmap (toUniverseAssociated (Proxy :: Proxy PostgresUniverse)) (otherParser field bytestring)
 
 injects
   :: ( Every (InUniverse universe) types
