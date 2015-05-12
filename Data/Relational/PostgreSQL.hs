@@ -46,6 +46,7 @@ import qualified Database.PostgreSQL.Simple.FromField as PFF
 import qualified Database.PostgreSQL.Simple.FromRow as PFR
 import qualified Data.Text as T
 import Data.Int (Int64)
+import Data.Time.Calendar
 import Data.Relational
 import Unsafe.Coerce
 
@@ -80,7 +81,7 @@ instance (Every PTF.ToField types) => PTR.ToRow (HList types) where
       ConsHList v rest -> PTF.toField v : PTR.toRow rest
 
 
-makeInsertStatement :: Insert universe sym schema -> String
+makeInsertStatement :: Insert '(sym, schema) -> String
 makeInsertStatement insert =
     concat
     [ "INSERT INTO "
@@ -112,18 +113,18 @@ makeInsertStatement insert =
         EmptySchema -> []
         ConsSchema _ rest -> "?" : makeSchemaFields rest
 
-makeDeleteStatement :: Delete universe sym schema conditioned -> String
-makeDeleteStatement (Delete proxy table condition) =
+makeDeleteStatement :: Delete '(sym, schema) conditioned -> String
+makeDeleteStatement delete =
     concat
     [ "DELETE FROM "
-    , tableName table
+    , tableName (deleteTable delete)
     , " WHERE "
     , conditionClause
     ]
   where
-    conditionClause = makeConditionClause condition
+    conditionClause = makeConditionClause (deleteCondition delete)
 
-makeUpdateStatement :: Update universe sym schema projected conditioned -> String
+makeUpdateStatement :: Update '(sym, schema) projected conditioned -> String
 makeUpdateStatement update =
     concat
     [ "UPDATE "
@@ -145,7 +146,7 @@ makeUpdateStatement update =
         EmptyProject -> []
         ConsProject col rest -> (concat [columnName col, " = ?"]) : (makeAssignments rest)
 
-makeSelectQuery :: Select univerese tableName selected conditioned available -> String
+makeSelectQuery :: Select '(tableName, schema) selected conditioned -> String
 makeSelectQuery select =
     concat
     [ "SELECT "
@@ -185,6 +186,7 @@ data PostgresUniverse t where
     UInt :: Int -> PostgresUniverse t
     UDouble :: Double -> PostgresUniverse t
     UBool :: Bool -> PostgresUniverse t
+    UDay :: Day -> PostgresUniverse t
     UNull :: () -> PostgresUniverse t
     UNullable :: Maybe (PostgresUniverse t) -> PostgresUniverse t
 
@@ -194,6 +196,7 @@ instance Show (PostgresUniverse t) where
       UInt i -> show i
       UDouble d -> show d
       UBool b -> show b
+      UDay d -> show d
       UNull () -> show ()
       UNullable mebe -> show mebe
 
@@ -225,6 +228,13 @@ instance InUniverse PostgresUniverse Bool where
   toUniverseAssociated proxy b = UBool b
   fromUniverseAssociated (UBool b) = b
 
+instance InUniverse PostgresUniverse Day where
+  type UniverseType PostgresUniverse Day = Day
+  toUniverse proxy = UDay
+  fromUniverse proxy (UDay d) = Just d
+  toUniverseAssociated proxy = UDay
+  fromUniverseAssociated (UDay d) = d
+
 {-
 instance InUniverse PostgresUniverse a => InUniverse PostgresUniverse (Maybe a) where
   type UniverseType PostgresUniverse (Maybe a) = Maybe (UniverseType PostgresUniverse a)
@@ -238,6 +248,7 @@ instance PTF.ToField (PostgresUniverse t) where
       UInt i -> PTF.toField i
       UDouble d -> PTF.toField d
       UBool b -> PTF.toField b
+      UDay d -> PTF.toField d
       UNull () -> PTF.toField PT.Null
       UNullable mebe -> PTF.toField mebe
 
@@ -269,20 +280,21 @@ makeParametersFromCondition proxy cs = injects proxy lst
     lst = conditionValues cs
 
 postgresSelect
-  :: forall universe tableName conditioned selected available .
+  :: forall universe tableName conditioned selected schema .
      ( Every (InUniverse universe) (Snds conditioned)
      , Every (PFF.FromField) (Fmap universe (Snds selected))
      , Every (PTF.ToField) (Fmap universe (Snds conditioned))
      , TypeList (Fmap universe (Snds selected))
      )
-  => Select universe tableName selected conditioned available
+  => Select '(tableName, schema) selected conditioned
+  -> Proxy universe
   -> P.Connection
   -> IO [HList (Fmap universe (Snds selected))]
-postgresSelect select conn =
+postgresSelect select proxy conn =
     let actualQuery :: P.Query
         actualQuery = fromString (makeSelectQuery select)
         parameters :: HList (Fmap universe (Snds conditioned))
-        parameters = makeParametersFromCondition (Proxy :: Proxy universe) (selectCondition select)
+        parameters = makeParametersFromCondition proxy (selectCondition select)
     in  P.query conn actualQuery parameters
 
 postgresInsert
@@ -290,14 +302,15 @@ postgresInsert
      ( Every (PTF.ToField) (Fmap universe (Snds schema))
      , Every (InUniverse universe) (Snds schema)
      )
-  => Insert universe sym schema
+  => Insert '(sym, schema)
+  -> Proxy universe
   -> P.Connection
   -> IO Int64
-postgresInsert insert conn =
+postgresInsert insert proxy conn =
     let statement :: P.Query
         statement = fromString (makeInsertStatement insert)
         parameters :: HList (Fmap universe (Snds schema))
-        parameters = allToUniverse (Proxy :: Proxy universe) (insertRow insert)
+        parameters = allToUniverse proxy (insertRow insert)
     in  P.execute conn statement parameters
 
 postgresDelete
@@ -305,14 +318,15 @@ postgresDelete
      ( Every (InUniverse universe) (Snds conditioned)
      , Every (PTF.ToField) (Fmap universe (Snds conditioned))
      )
-  => Delete universe tableName schema conditioned
+  => Delete '(tableName, schema) conditioned
+  -> Proxy universe
   -> P.Connection
   -> IO Int64
-postgresDelete delete conn =
+postgresDelete delete proxy conn =
     let statement :: P.Query
         statement = fromString (makeDeleteStatement delete)
         parameters :: HList (Fmap universe (Snds conditioned))
-        parameters = makeParametersFromCondition (Proxy :: Proxy universe) (deleteCondition delete)
+        parameters = makeParametersFromCondition proxy (deleteCondition delete)
     in  P.execute conn statement parameters
 
 postgresUpdate
@@ -322,17 +336,16 @@ postgresUpdate
      , Every (PTF.ToField) (Fmap universe (Snds conditioned))
      , Every (PTF.ToField) (Fmap universe (Snds projected))
      )
-  => Update universe tableName schema projected conditioned
+  => Update '(tableName, schema) projected conditioned
+  -> Proxy universe
   -> P.Connection
   -> IO Int64
-postgresUpdate update conn =
-    let universeProxy :: Proxy universe
-        universeProxy = Proxy
-        statement :: P.Query
+postgresUpdate update proxy conn =
+    let statement :: P.Query
         statement = fromString (makeUpdateStatement update)
         conditionParameters :: HList (Fmap universe (Snds conditioned))
-        conditionParameters = makeParametersFromCondition universeProxy (updateCondition update)
+        conditionParameters = makeParametersFromCondition proxy (updateCondition update)
         assignmentParameters :: HList (Fmap universe (Snds projected))
-        assignmentParameters = allToUniverse universeProxy (updateColumns update)
+        assignmentParameters = allToUniverse proxy (updateColumns update)
         parameters = assignmentParameters PT.:. conditionParameters
     in  P.execute conn statement parameters
