@@ -1,6 +1,6 @@
 {-|
 Module      : Data.Relational.Condition
-Description : Description of conditions.
+Description : Description of conditions on selections.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
@@ -39,6 +39,7 @@ module Data.Relational.Condition (
   , (.||.)
 
   , RemoveTerminalConditions(..)
+  , DropEmptyDisjuncts(..)
 
   ) where
 
@@ -146,6 +147,22 @@ instance RemoveTerminalConditions t '[] where
 instance (RemoveTerminalConditions' t ts, RemoveTerminalConditions t tss) => RemoveTerminalConditions t (ts ': tss) where
     removeTerminalConditions proxy (AndCondition disjunction conjunction) =
         AndCondition (removeTerminalConditions' proxy disjunction) (removeTerminalConditions proxy conjunction)
+
+class DropEmptyDisjuncts (tss :: [[(Symbol, *)]]) where
+    dropEmptyDisjuncts :: Condition tss -> Condition (DropEmpty tss)
+
+instance DropEmptyDisjuncts '[] where
+    dropEmptyDisjuncts = id
+
+instance DropEmptyDisjuncts ts => DropEmptyDisjuncts ('[] ': ts) where
+    dropEmptyDisjuncts (AndCondition emptyDisjunct rest) = dropEmptyDisjuncts rest
+
+instance DropEmptyDisjuncts ts => DropEmptyDisjuncts (ss ': ts) where
+    -- We know that
+    --   (DropEmpty (ts1 : tss) ~ (ts1 : DropEmpty tss))
+    -- because if not, the more specific instance would be used.
+    -- unsafeCoerce to the rescue.
+    dropEmptyDisjuncts (AndCondition disjunct rest) = unsafeCoerce (AndCondition disjunct (dropEmptyDisjuncts rest))
 
 class RemoveTerminalConditions' (t :: (Symbol, *)) (ts :: [(Symbol, *)]) where
     removeTerminalConditions' :: Proxy t -> ConditionDisjunction ts -> ConditionDisjunction (RemoveAll t ts)

@@ -47,6 +47,7 @@ module Data.Relational.Types (
   , Restore
   , RemoveAll
   , RemoveAll2
+  , DropEmpty
   , Replace
   , And
   , IfElse
@@ -153,6 +154,11 @@ type family RemoveAll (x :: k) (xs :: [k]) :: [k] where
 type family RemoveAll2 (x :: k) (xs :: [[k]]) :: [[k]] where
   RemoveAll2 x '[] = '[]
   RemoveAll2 x (xs ': xss) = (RemoveAll x xs) ': (RemoveAll2 x xss)
+
+type family DropEmpty (xss :: [[k]]) :: [[k]] where
+  DropEmpty '[] = '[]
+  DropEmpty ('[] ': xs) = DropEmpty xs
+  DropEmpty (x ': xs) = x ': (DropEmpty xs)
 
 -- | If ys is xs with precisely one element removed, then Restore x ys xs = xs.
 --   In other words
