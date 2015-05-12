@@ -165,10 +165,23 @@ type family DropEmpty (xss :: [[k]]) :: [[k]] where
 --     @
 --       Restore x (Remove x xs) xs = xs
 --     @
+--
+--   In any other case, Restore x ys xs = ys
+--
+--   The implementation follows from this observation: the only case when
+--   Restore x ys xs /= ys happens when there is some segment zs such that
+--
+--     ys = zs ': rest
+--     xs = zs ': x ': rest
+--
+--   i.e. xs and ys agree on some (possibly empty) initial segment, some
+--   (possibly empty) tail, and x lives in-between. This is captured in the
+--   first and second cases. The third case gives us the desired property in
+--   other cases.
 type family Restore (x :: k) (ys :: [k]) (xs :: [k]) :: [k] where
-  Restore x '[] '[x] = '[x]
-  Restore x (y ': ys) (x ': xs) = x ': y ': ys
-  Restore x (y ': ys) (z ': xs) = y ': (Restore x ys xs)
+  Restore x ys (x ': ys) = x ': ys
+  Restore x (y ': ys) (y ': xs) = y ': (Restore x ys xs)
+  Restore x ys xs = ys
 
 type family Replace (x :: k) (y :: k) (xs :: [k]) :: [k] where
   Replace x y '[] = '[]

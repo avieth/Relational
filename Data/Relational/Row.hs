@@ -60,18 +60,18 @@ pattern columnAndValue :&| rest = ConsRow columnAndValue rest
 class RestoreRowField (t :: (Symbol, *)) (ts :: [(Symbol, *)]) (ss :: [(Symbol, *)]) where
     restoreRowField :: Proxy ss -> Field t -> Row ts -> Row (Restore t ts ss)
 
-instance RestoreRowField t '[] '[t] where
-    restoreRowField _ field EmptyRow = ConsRow field EmptyRow
+instance RestoreRowField t ys (t ': ys) where
+    restoreRowField _ field rest = ConsRow field rest
 
-instance RestoreRowField t (y ': ys) (t ': xs) where
-    restoreRowField _ field whys = field :&| whys
+instance RestoreRowField t ys ss => RestoreRowField t (y ': ys) (y ': ss) where
+    -- ‘Restore t (y : ys) (y : ss)’
+    --                   with ‘t : Restore t (y : ys) (y : ss)’
+    --
+    restoreRowField proxy field whys = unsafeCoerce (field :&| (restoreRowField proxy field whys))
 
-instance RestoreRowField t ys xs => RestoreRowField t (y ': ys) xs where
-    -- GHC cannot deduce that
-    --   (Restore t (t1 : ts) xs ~ (t1 : Restore t ts xs))
-    -- but we can because if this were not the case, then the more specific
-    -- instance would have been used. So, we unsafeCoerce.
-    restoreRowField proxy field (why :&| rest) = unsafeCoerce (why :&| (restoreRowField proxy field rest))
+instance RestoreRowField t ys xs where
+    -- Not sure about this unsafeCoerce. Must look into it later.
+    restoreRowField proxy fields whys = unsafeCoerce whys
 
 -- | This class and its instances allow us to swap adjacent entires in a row.
 --
