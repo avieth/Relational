@@ -14,12 +14,13 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Data.Relational.Project (
 
     Project(..)
-  , nil
-  , (.+|)
+  , pattern EndProject
+  , pattern (:+|)
   , fullProjection
 
   ) where
@@ -34,13 +35,10 @@ data Project :: [(Symbol, *)] -> * where
   EmptyProject :: Project '[]
   ConsProject :: Column sym u -> Project lst -> Project ('(sym, u) ': lst)
 
-nil :: Project '[]
-nil = EmptyProject
+pattern EndProject = EmptyProject
 
-infixr 9 .+|
-
-(.+|) :: Column sym u -> Project lst -> Project ('(sym, u) ': lst)
-(.+|) = ConsProject
+infixr 9 :+|
+pattern col :+| rest = ConsProject col rest
 
 -- | A projection onto every column in a schema.
 fullProjection :: Schema schema -> Project schema

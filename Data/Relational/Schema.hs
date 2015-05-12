@@ -16,12 +16,13 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Data.Relational.Schema (
 
     Schema(..)
-  , endSchema
-  , (.:|)
+  , pattern EndSchema
+  , pattern (:|)
 
   ) where
 
@@ -54,15 +55,8 @@ data Schema :: [(Symbol, *)] -> * where
     -> Schema lst
     -> Schema ('(sym, u) ': lst)
 
-endSchema :: Schema '[]
-endSchema = EmptySchema
+pattern EndSchema = EmptySchema
 
-infixr 9 .:|
+infixr 9 :|
+pattern col :| rest = ConsSchema col rest
 
-(.:|) 
-  :: ( NewElement sym (Fsts lst) ~ 'True
-     )
-  => Column sym u
-  -> Schema lst
-  -> Schema ('(sym, u) ': lst)
-(.:|) = ConsSchema
