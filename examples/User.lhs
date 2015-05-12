@@ -3,21 +3,23 @@
 > {-# LANGUAGE MultiParamTypeClasses #-}
 > {-# LANGUAGE OverloadedStrings #-}
 > {-# LANGUAGE PatternSynonyms #-}
+> {-# LANGUAGE FlexibleInstances #-}
 > 
 > import Control.Applicative
 > import Data.Proxy
 > import Data.Relational
 > import Data.Time.Calendar
+> import Data.Relational.Interpreter
 > import Data.Relational.PostgreSQL
 > import qualified Data.Text as T
 > import qualified Database.PostgreSQL.Simple as P
 
 Suppose we program with the following datatypes:
 
-> newtype Username = Username T.Text
+> newtype Username = Username String
 >   deriving (Show)
 >
-> newtype Fullname = Fullname T.Text
+> newtype Fullname = Fullname String
 >   deriving (Show)
 >
 > newtype Birthday = Birthday Day
@@ -162,14 +164,14 @@ use the only existing driver, interfacing with PostgreSQL via postgresql-simple.
 > instance InUniverse PostgresUniverse Username where
 >   toUniverse proxyU (Username t) = UText t
 >   fromUniverse proxy (UText t) = Just (Username t)
->   type UniverseType PostgresUniverse Username = T.Text
+>   type UniverseType PostgresUniverse Username = String
 >   toUniverseAssociated proxy = UText
 >   fromUniverseAssociated (UText t) = t
 >
 > instance InUniverse PostgresUniverse Fullname where
 >   toUniverse proxyU (Fullname t) = UText t
 >   fromUniverse proxy (UText t) = Just (Fullname t)
->   type UniverseType PostgresUniverse Fullname = T.Text
+>   type UniverseType PostgresUniverse Fullname = String
 >   toUniverseAssociated proxy = UText
 >   fromUniverseAssociated (UText t) = t
 >
@@ -183,15 +185,11 @@ use the only existing driver, interfacing with PostgreSQL via postgresql-simple.
 With a PostgreSQL connection in hand, we can actually execute our reads and
 writes.
 
-> postgresUniverseProxy :: Proxy PostgresUniverse
-> postgresUniverseProxy = Proxy
+> postgresProxy :: Proxy PostgresInterpreter
+> postgresProxy = Proxy
 >
-> exampleSelect birthday conn = do
->     i <- postgresSelect (selectProfileByBirthday birthday) postgresUniverseProxy conn
->     print i
->     return ()
->
-> exampleInsert userProfile conn = do
->     i <- postgresInsert (insertUserProfile userProfile) postgresUniverseProxy conn
->     print i
->     return ()
+> exampleSelect birthday connInfo =
+>     runPostgresInterpreter (interpretSelect postgresProxy (selectProfileByBirthday birthday)) connInfo
+
+> exampleInsert userProfile connInfo =
+>     runPostgresInterpreter (interpretInsert postgresProxy (insertUserProfile userProfile)) connInfo

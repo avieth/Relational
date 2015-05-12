@@ -23,18 +23,22 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 module Data.Relational.PostgreSQL (
 
-    PostgresUniverse(..)
-  , postgresSelect
-  , postgresInsert
-  , postgresDelete
-  , postgresUpdate
+    PostgresInterpreter(..)
+  , PostgresMonad
+  , Universe(..)
+  , PostgresUniverse
+  , runPostgresInterpreter
 
   ) where
 
 import Control.Applicative
+import Control.Monad.Trans.Class
+import Control.Monad.Trans.Reader
 import Data.Proxy
 import Data.List (intersperse)
 import Data.String (fromString)
@@ -47,8 +51,185 @@ import qualified Database.PostgreSQL.Simple.FromRow as PFR
 import qualified Data.Text as T
 import Data.Int (Int64)
 import Data.Time.Calendar
+
 import Data.Relational
-import Unsafe.Coerce
+import Data.Relational.Interpreter
+
+
+data PostgresInterpreter = PostgresInterpreter
+type PostgresUniverse = Universe PostgresInterpreter
+
+newtype PostgresMonad a = PostgresMonad {
+    exitPostgresMonad :: ReaderT P.Connection IO a
+  } deriving (Functor, Applicative, Monad)
+
+runPostgresInterpreter pm connInfo = do
+    conn <- P.connect connInfo
+    P.withTransaction conn (runReaderT (exitPostgresMonad pm) conn)
+
+instance RelationalInterpreter PostgresInterpreter where
+
+    data Universe PostgresInterpreter t where
+      UText :: String -> Universe PostgresInterpreter t
+      -- WTF? Somehow GHC thinks there's no ToField or FromField for T.Text, so
+      -- I'm using String instead.
+      UInt :: Int -> Universe PostgresInterpreter t
+      UDouble :: Double -> Universe PostgresInterpreter t
+      UBool :: Bool -> Universe PostgresInterpreter t
+      UDay :: Day -> Universe PostgresInterpreter t
+      UNull :: () -> Universe PostgresInterpreter t
+      UNullable :: Maybe (Universe PostgresInterpreter t) -> Universe PostgresInterpreter t
+
+    type InterpreterMonad PostgresInterpreter = PostgresMonad
+
+    type InterpreterSelectConstraint PostgresInterpreter schema projected conditioned =
+             ( Every (InUniverse PostgresUniverse) (Snds conditioned)
+             , TypeList (Fmap PostgresUniverse (Snds projected))
+             , Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
+             , Every PFF.FromField (Fmap PostgresUniverse (Snds projected))
+             )
+
+    interpretSelect proxy (select :: Select '(tableName, schema) projected conditioned) =
+        let actualQuery :: P.Query
+            actualQuery = fromString (makeSelectQuery select)
+            parameters :: HList (Fmap PostgresUniverse (Snds conditioned))
+            parameters = makeParametersFromCondition (selectCondition select)
+            doQuery :: P.Connection -> IO [HList (Fmap PostgresUniverse (Snds projected))]
+            doQuery = \conn -> P.query conn actualQuery parameters
+        in  PostgresMonad $ do
+                conn <- ask
+                lift (doQuery conn)
+
+    type InterpreterDeleteConstraint PostgresInterpreter schema conditioned =
+             ( Every (InUniverse PostgresUniverse) (Snds conditioned)
+             , Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
+             ) 
+
+    interpretDelete proxy (delete :: Delete '(tableName, schema) conditioned) =
+        let statement :: P.Query
+            statement = fromString (makeDeleteStatement delete)
+            parameters :: HList (Fmap PostgresUniverse (Snds conditioned))
+            parameters = makeParametersFromCondition (deleteCondition delete)
+        in  PostgresMonad $ do
+                conn <- ask
+                lift (P.execute conn statement parameters)
+                return ()
+
+    type InterpreterInsertConstraint PostgresInterpreter schema =
+             ( Every (InUniverse PostgresUniverse) (Snds schema)
+             , Every PTF.ToField (Fmap PostgresUniverse (Snds schema))
+             )
+
+    interpretInsert proxy (insert :: Insert '(tableName, schema)) =
+        let statement :: P.Query
+            statement = fromString (makeInsertStatement insert)
+            parameters :: HList (Fmap PostgresUniverse (Snds schema))
+            parameters = allToUniverse proxy (insertRow insert)
+            proxy :: Proxy PostgresUniverse
+            proxy = Proxy
+        in  PostgresMonad $ do
+                conn <- ask
+                lift (P.execute conn statement parameters)
+                return ()
+
+    type InterpreterUpdateConstraint PostgresInterpreter schema projected conditioned =
+             ( Every (InUniverse PostgresUniverse) (Snds conditioned)
+             , Every (InUniverse PostgresUniverse) (Snds projected)
+             , Every PTF.ToField (Fmap PostgresUniverse (Snds projected))
+             , Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
+             )
+
+    interpretUpdate proxy (update :: Update '(tableName, schema) projected conditioned) =
+        let statement :: P.Query
+            statement = fromString (makeUpdateStatement update)
+            conditionParameters :: HList (Fmap PostgresUniverse (Snds conditioned))
+            conditionParameters = makeParametersFromCondition (updateCondition update)
+            assignmentParameters :: HList (Fmap PostgresUniverse (Snds projected))
+            assignmentParameters = allToUniverse proxy (updateColumns update)
+            parameters = assignmentParameters PT.:. conditionParameters
+            proxy :: Proxy PostgresUniverse
+            proxy = Proxy
+        in  PostgresMonad $ do
+                conn <- ask
+                lift (P.execute conn statement parameters)
+                return ()
+
+instance Show (Universe PostgresInterpreter t) where
+  show u = case u of
+      UText t -> show t
+      UInt i -> show i
+      UDouble d -> show d
+      UBool b -> show b
+      UDay d -> show d
+      UNull () -> show ()
+      UNullable mebe -> show mebe
+
+{-
+instance InUniverse PostgresUniverse T.Text where
+  type UniverseType PostgresUniverse T.Text = T.Text
+  toUniverse proxy = UText
+  fromUniverse proxy (UText t) = Just t
+  toUniverseAssociated proxy t = UText t
+  fromUniverseAssociated (UText t) = t
+
+instance InUniverse PostgresUniverse Int where
+  type UniverseType PostgresUniverse Int = Int
+  toUniverse proxy = UInt
+  fromUniverse proxy (UInt i) = Just i
+  toUniverseAssociated proxy i = UInt i
+  fromUniverseAssociated (UInt i) = i
+
+instance InUniverse PostgresUniverse Double where
+  type UniverseType PostgresUniverse Double = Double
+  toUniverse proxy = UDouble
+  fromUniverse proxy (UDouble d) = Just d
+  toUniverseAssociated proxy d = UDouble d
+  fromUniverseAssociated (UDouble d) = d
+
+instance InUniverse PostgresUniverse Bool where
+  type UniverseType PostgresUniverse Bool = Bool
+  toUniverse proxy = UBool
+  fromUniverse proxy (UBool b) = Just b
+  toUniverseAssociated proxy b = UBool b
+  fromUniverseAssociated (UBool b) = b
+
+instance InUniverse PostgresUniverse Day where
+  type UniverseType PostgresUniverse Day = Day
+  toUniverse proxy = UDay
+  fromUniverse proxy (UDay d) = Just d
+  toUniverseAssociated proxy = UDay
+  fromUniverseAssociated (UDay d) = d
+-}
+{-
+instance InUniverse PostgresUniverse a => InUniverse PostgresUniverse (Maybe a) where
+  type UniverseType PostgresUniverse (Maybe a) = Maybe (UniverseType PostgresUniverse a)
+  toUniverse proxy = UNullable . fmap (toUniverse proxy)
+  fromUniverse proxy (UNullable x) = fmap (fromUniverse (Proxy :: Proxy a)) x
+-}
+
+instance PTF.ToField ((Universe PostgresInterpreter) t) where
+  toField u = case u of
+      UText str -> PTF.toField str
+      UInt i -> PTF.toField i
+      UDouble d -> PTF.toField d
+      UBool b -> PTF.toField b
+      UDay d -> PTF.toField d
+      UNull () -> PTF.toField PT.Null
+      UNullable mebe -> PTF.toField mebe
+
+instance
+       ( InUniverse (Universe PostgresInterpreter) t
+       , PFF.FromField (UniverseType (Universe PostgresInterpreter) t)
+       )
+    => PFF.FromField (Universe PostgresInterpreter t)
+  where
+    fromField = let otherParser :: PFF.FieldParser (UniverseType (Universe PostgresInterpreter) t)
+                    otherParser = PFF.fromField
+                in  \field bytestring -> fmap (toUniverseAssociated Proxy) (otherParser field bytestring)
+
+
+postgresProxy :: Proxy PostgresInterpreter
+postgresProxy = Proxy
 
 -- | Wrapper over the PostgreSQL-simple RowParser, so that we can make it
 --   work with HLists. The type parameter is a list of types.
@@ -79,7 +260,6 @@ instance (Every PTF.ToField types) => PTR.ToRow (HList types) where
   toRow lst = case lst of
       EmptyHList -> []
       ConsHList v rest -> PTF.toField v : PTR.toRow rest
-
 
 makeInsertStatement :: Insert '(sym, schema) -> String
 makeInsertStatement insert =
@@ -181,171 +361,17 @@ makeConditionClause constr = case constr of
   AndCondition left right -> concat [makeConditionClause left, " AND ", makeConditionClause right]
   OrCondition left right -> concat [makeConditionClause left, " OR ", makeConditionClause right]
 
-data PostgresUniverse t where
-    UText :: T.Text -> PostgresUniverse t
-    UInt :: Int -> PostgresUniverse t
-    UDouble :: Double -> PostgresUniverse t
-    UBool :: Bool -> PostgresUniverse t
-    UDay :: Day -> PostgresUniverse t
-    UNull :: () -> PostgresUniverse t
-    UNullable :: Maybe (PostgresUniverse t) -> PostgresUniverse t
-
-instance Show (PostgresUniverse t) where
-  show u = case u of
-      UText t -> show t
-      UInt i -> show i
-      UDouble d -> show d
-      UBool b -> show b
-      UDay d -> show d
-      UNull () -> show ()
-      UNullable mebe -> show mebe
-
-instance InUniverse PostgresUniverse T.Text where
-  type UniverseType PostgresUniverse T.Text = T.Text
-  toUniverse proxy = UText
-  fromUniverse proxy (UText t) = Just t
-  toUniverseAssociated proxy t = UText t
-  fromUniverseAssociated (UText t) = t
-
-instance InUniverse PostgresUniverse Int where
-  type UniverseType PostgresUniverse Int = Int
-  toUniverse proxy = UInt
-  fromUniverse proxy (UInt i) = Just i
-  toUniverseAssociated proxy i = UInt i
-  fromUniverseAssociated (UInt i) = i
-
-instance InUniverse PostgresUniverse Double where
-  type UniverseType PostgresUniverse Double = Double
-  toUniverse proxy = UDouble
-  fromUniverse proxy (UDouble d) = Just d
-  toUniverseAssociated proxy d = UDouble d
-  fromUniverseAssociated (UDouble d) = d
-
-instance InUniverse PostgresUniverse Bool where
-  type UniverseType PostgresUniverse Bool = Bool
-  toUniverse proxy = UBool
-  fromUniverse proxy (UBool b) = Just b
-  toUniverseAssociated proxy b = UBool b
-  fromUniverseAssociated (UBool b) = b
-
-instance InUniverse PostgresUniverse Day where
-  type UniverseType PostgresUniverse Day = Day
-  toUniverse proxy = UDay
-  fromUniverse proxy (UDay d) = Just d
-  toUniverseAssociated proxy = UDay
-  fromUniverseAssociated (UDay d) = d
-
-{-
-instance InUniverse PostgresUniverse a => InUniverse PostgresUniverse (Maybe a) where
-  type UniverseType PostgresUniverse (Maybe a) = Maybe (UniverseType PostgresUniverse a)
-  toUniverse proxy = UNullable . fmap (toUniverse proxy)
-  fromUniverse proxy (UNullable x) = fmap (fromUniverse (Proxy :: Proxy a)) x
--}
-
-instance PTF.ToField (PostgresUniverse t) where
-  toField u = case u of
-      UText str -> PTF.toField str
-      UInt i -> PTF.toField i
-      UDouble d -> PTF.toField d
-      UBool b -> PTF.toField b
-      UDay d -> PTF.toField d
-      UNull () -> PTF.toField PT.Null
-      UNullable mebe -> PTF.toField mebe
-
-instance (InUniverse PostgresUniverse t, PFF.FromField (UniverseType PostgresUniverse t)) => PFF.FromField (PostgresUniverse t) where
-  fromField = let otherParser :: PFF.FieldParser (UniverseType PostgresUniverse t)
-                  otherParser = PFF.fromField
-              in  \field bytestring -> fmap (toUniverseAssociated (Proxy :: Proxy PostgresUniverse)) (otherParser field bytestring)
-
-injects
-  :: ( Every (InUniverse universe) types
-     )
-  => Proxy universe
-  -> HList types
-  -> HList (Fmap universe types)
-injects proxy lst = case lst of
-    HNil -> HNil
-    x :> xs -> (toUniverse proxy x) :> (injects proxy xs)
-
 makeParametersFromCondition
-  :: forall universe conditions .
-     ( Every (InUniverse universe) (Snds conditions)
+  :: forall conditions .
+     ( Every (InUniverse PostgresUniverse) (Snds conditions)
      )
-  => Proxy universe
-  -> Condition conditions
-  -> HList (Fmap universe (Snds conditions))
-makeParametersFromCondition proxy cs = injects proxy lst
+  => Condition conditions
+  -> HList (Fmap PostgresUniverse (Snds conditions))
+makeParametersFromCondition cs = allToUniverse proxy lst
   where
     lst :: HList (Snds conditions)
     lst = conditionValues cs
+    proxy :: Proxy PostgresUniverse
+    proxy = Proxy
 
-postgresSelect
-  :: forall universe tableName conditioned selected schema .
-     ( Every (InUniverse universe) (Snds conditioned)
-     , Every (PFF.FromField) (Fmap universe (Snds selected))
-     , Every (PTF.ToField) (Fmap universe (Snds conditioned))
-     , TypeList (Fmap universe (Snds selected))
-     )
-  => Select '(tableName, schema) selected conditioned
-  -> Proxy universe
-  -> P.Connection
-  -> IO [HList (Fmap universe (Snds selected))]
-postgresSelect select proxy conn =
-    let actualQuery :: P.Query
-        actualQuery = fromString (makeSelectQuery select)
-        parameters :: HList (Fmap universe (Snds conditioned))
-        parameters = makeParametersFromCondition proxy (selectCondition select)
-    in  P.query conn actualQuery parameters
 
-postgresInsert
-  :: forall universe sym schema .
-     ( Every (PTF.ToField) (Fmap universe (Snds schema))
-     , Every (InUniverse universe) (Snds schema)
-     )
-  => Insert '(sym, schema)
-  -> Proxy universe
-  -> P.Connection
-  -> IO Int64
-postgresInsert insert proxy conn =
-    let statement :: P.Query
-        statement = fromString (makeInsertStatement insert)
-        parameters :: HList (Fmap universe (Snds schema))
-        parameters = allToUniverse proxy (insertRow insert)
-    in  P.execute conn statement parameters
-
-postgresDelete
-  :: forall universe tableName schema conditioned .
-     ( Every (InUniverse universe) (Snds conditioned)
-     , Every (PTF.ToField) (Fmap universe (Snds conditioned))
-     )
-  => Delete '(tableName, schema) conditioned
-  -> Proxy universe
-  -> P.Connection
-  -> IO Int64
-postgresDelete delete proxy conn =
-    let statement :: P.Query
-        statement = fromString (makeDeleteStatement delete)
-        parameters :: HList (Fmap universe (Snds conditioned))
-        parameters = makeParametersFromCondition proxy (deleteCondition delete)
-    in  P.execute conn statement parameters
-
-postgresUpdate
-  :: forall universe tableName schema projected conditioned .
-     ( Every (InUniverse universe) (Snds conditioned)
-     , Every (InUniverse universe) (Snds projected)
-     , Every (PTF.ToField) (Fmap universe (Snds conditioned))
-     , Every (PTF.ToField) (Fmap universe (Snds projected))
-     )
-  => Update '(tableName, schema) projected conditioned
-  -> Proxy universe
-  -> P.Connection
-  -> IO Int64
-postgresUpdate update proxy conn =
-    let statement :: P.Query
-        statement = fromString (makeUpdateStatement update)
-        conditionParameters :: HList (Fmap universe (Snds conditioned))
-        conditionParameters = makeParametersFromCondition proxy (updateCondition update)
-        assignmentParameters :: HList (Fmap universe (Snds projected))
-        assignmentParameters = allToUniverse proxy (updateColumns update)
-        parameters = assignmentParameters PT.:. conditionParameters
-    in  P.execute conn statement parameters
