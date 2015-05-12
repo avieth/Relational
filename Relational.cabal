@@ -20,11 +20,9 @@ library
   exposed-modules:     Data.Relational
                      , Data.Relational.Types
                      , Data.Relational.Universe
-                     , Data.Relational.QueryOnTable
                      , Data.Relational.Condition
                      , Data.Relational.Project
                      , Data.Relational.Schema
-                     , Data.Relational.Query
                      , Data.Relational.Column
                      , Data.Relational.Table
                      , Data.Relational.Select
