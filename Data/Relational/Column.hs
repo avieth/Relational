@@ -33,9 +33,9 @@ import Data.Proxy
 --       exampleColumn = Column (Proxy :: Proxy "id") (Proxy :: Proxy Int)
 --     @
 --
-data Column :: Symbol -> * -> * where
-  Column :: KnownSymbol sym => Proxy sym -> Proxy u -> Column sym u
+data Column :: (Symbol, *) -> * where
+  Column :: KnownSymbol sym => Proxy sym -> Proxy u -> Column '(sym, u)
 
 -- | The name of a column; used to identify that column in queries.
-columnName :: Column sym t -> String
+columnName :: Column '(sym, t) -> String
 columnName (Column symbol _) = symbolVal symbol

@@ -41,9 +41,9 @@ import Data.Relational.Schema
 -- | A condition on a query: disjunction, conjunction, equality, ordering.
 data Condition :: [(Symbol, *)] -> * where
   EmptyCondition :: Condition '[]
-  EqCondition :: Column sym t -> t -> Condition '[ '(sym, t) ]
-  LtCondition :: Column sym t -> t -> Condition '[ '(sym, t) ]
-  GtCondition :: Column sym t -> t -> Condition '[ '(sym, t) ]
+  EqCondition :: Column '(sym, t) -> t -> Condition '[ '(sym, t) ]
+  LtCondition :: Column '(sym, t) -> t -> Condition '[ '(sym, t) ]
+  GtCondition :: Column '(sym, t) -> t -> Condition '[ '(sym, t) ]
   AndCondition :: Condition cs -> Condition cs' -> Condition (Append cs cs')
   OrCondition :: Condition cs -> Condition cs' -> Condition (Append cs cs')
   -- We Append rather than Union so that the length of the type list parameter
@@ -74,13 +74,13 @@ infixr 8 .==.
 infixr 8 .<.
 infixr 8 .>.
 
-(.==.) :: Column sym t -> t -> Condition '[ '(sym, t) ]
+(.==.) :: Column '(sym, t) -> t -> Condition '[ '(sym, t) ]
 (.==.) = EqCondition
 
-(.<.) :: Column sym t -> t -> Condition '[ '(sym, t) ]
+(.<.) :: Column '(sym, t) -> t -> Condition '[ '(sym, t) ]
 (.<.) = LtCondition
 
-(.>.) :: Column sym t -> t -> Condition '[ '(sym, t) ]
+(.>.) :: Column '(sym, t) -> t -> Condition '[ '(sym, t) ]
 (.>.) = GtCondition
 
 (.&&.) :: Condition cs -> Condition cs' -> Condition (Append cs cs')

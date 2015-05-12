@@ -51,7 +51,7 @@ data Schema :: [(Symbol, *)] -> * where
   ConsSchema
     :: ( NewElement sym (Fsts lst) ~ 'True
        )
-    => Column sym u
+    => Column '(sym, u)
     -> Schema lst
     -> Schema ('(sym, u) ': lst)
 

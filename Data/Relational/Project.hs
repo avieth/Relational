@@ -33,7 +33,7 @@ import Data.Relational.Schema
 --   A Project is like a schema, but there can be duplicate columns.
 data Project :: [(Symbol, *)] -> * where
   EmptyProject :: Project '[]
-  ConsProject :: Column sym u -> Project lst -> Project ('(sym, u) ': lst)
+  ConsProject :: Column '(sym, u) -> Project lst -> Project ('(sym, u) ': lst)
 
 pattern EndProject = EmptyProject
 
