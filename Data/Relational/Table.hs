@@ -29,12 +29,12 @@ import Data.Proxy
 import Data.Relational.Schema
 
 -- | A name (Symbol) and a schema give a Table.
-data Table :: Symbol -> [(Symbol, *)] -> * where
-  Table :: KnownSymbol sym => Proxy sym -> Schema xs -> Table sym xs
+data Table :: (Symbol, [(Symbol, *)]) -> * where
+  Table :: KnownSymbol sym => Proxy sym -> Schema xs -> Table '(sym, xs)
 
 -- | The name of a Table.
-tableName :: Table sym t -> String
+tableName :: Table '(sym, t) -> String
 tableName (Table symbol _) = symbolVal symbol
 
-tableSchema :: Table sym xs -> Schema xs
+tableSchema :: Table '(sym, xs) -> Schema xs
 tableSchema (Table _ sch) = sch

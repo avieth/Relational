@@ -31,11 +31,11 @@ data Delete (universe :: * -> *) sym schema conditioned where
     :: ( Subset conditioned schema ~ 'True
        )
     => Proxy universe
-    -> Table sym schema
+    -> Table '(sym, schema)
     -> Condition conditioned
     -> Delete universe sym schema conditioned
 
-deleteTable :: Delete universe sym schema conditioned -> Table sym schema
+deleteTable :: Delete universe sym schema conditioned -> Table '(sym, schema)
 deleteTable (Delete _ t _) = t
 
 deleteCondition :: Delete universe sym schema conditioned -> Condition conditioned

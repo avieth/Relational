@@ -38,7 +38,7 @@ data Update (universe :: * -> *) sym schema projected conditioned where
        --   SubsetUnique projected schema implies that projected also cannot.
        )
     => Proxy universe
-    -> Table sym schema
+    -> Table '(sym, schema)
     -> Project projected
     -> Condition conditioned
     -> HList (Snds projected)
@@ -46,7 +46,7 @@ data Update (universe :: * -> *) sym schema projected conditioned where
     --   by the projection.
     -> Update universe sym schema projected conditioned
 
-updateTable :: Update universe sym schema projected conditioned -> Table sym schema
+updateTable :: Update universe sym schema projected conditioned -> Table '(sym, schema)
 updateTable (Update _ t _ _ _) = t
 
 updateProject :: Update universe sym schema projected conditioned -> Project projected

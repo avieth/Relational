@@ -40,12 +40,12 @@ data Select universe tableName selected conditioned schema where
        , Subset conditioned schema ~ 'True
        )
     => Proxy universe
-    -> Table tableName schema
+    -> Table '(tableName, schema)
     -> Project selected
     -> Condition conditioned
     -> Select universe tableName selected conditioned schema
 
-selectTable :: Select universe tableName selected conditioned schema -> Table tableName schema
+selectTable :: Select universe tableName selected conditioned schema -> Table '(tableName, schema)
 selectTable (Select _ t _ _) = t
 
 selectProjection :: Select universe tableName selected conditioned schema -> Project selected
