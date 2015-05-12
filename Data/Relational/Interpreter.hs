@@ -32,22 +32,32 @@ class RelationalInterpreter t where
   type InterpreterInsertConstraint t (schema :: [(Symbol, *)]) :: Constraint
   type InterpreterUpdateConstraint t (schema :: [(Symbol, *)]) (projected :: [(Symbol, *)]) (conditioned :: [(Symbol, *)]) :: Constraint
   interpretSelect
-    :: (InterpreterSelectConstraint t schema projected conditioned)
+    :: ( Every (InUniverse (Universe t)) (Snds projected)
+       , Every (InUniverse (Universe t)) (Snds conditioned)
+       , InterpreterSelectConstraint t schema projected conditioned
+       )
     => Proxy t
     -> Select '(tableName, schema) projected conditioned
     -> (InterpreterMonad t) [HList (Fmap (Universe t) (Snds projected))]
   interpretDelete
-    :: (InterpreterDeleteConstraint t schema conditioned)
+    :: ( Every (InUniverse (Universe t)) (Snds conditioned)
+       , InterpreterDeleteConstraint t schema conditioned
+       )
     => Proxy t
     -> Delete '(tableName, schema) conditioned
     -> (InterpreterMonad t) ()
   interpretInsert
-    :: (InterpreterInsertConstraint t schema)
+    :: ( Every (InUniverse (Universe t)) (Snds schema)
+       , InterpreterInsertConstraint t schema
+       )
     => Proxy t
     -> Insert '(tableName, schema)
     -> (InterpreterMonad t) ()
   interpretUpdate
-    :: (InterpreterUpdateConstraint t schema projected conditioned)
+    :: ( Every (InUniverse (Universe t)) (Snds projected)
+       , Every (InUniverse (Universe t)) (Snds conditioned)
+       , InterpreterUpdateConstraint t schema projected conditioned
+       )
     => Proxy t
     -> Update '(tableName, schema) projected conditioned
     -> (InterpreterMonad t) ()

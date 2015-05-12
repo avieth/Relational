@@ -83,8 +83,7 @@ instance RelationalInterpreter PostgresInterpreter where
     type InterpreterMonad PostgresInterpreter = PostgresMonad
 
     type InterpreterSelectConstraint PostgresInterpreter schema projected conditioned =
-             ( Every (InUniverse PostgresUniverse) (Snds conditioned)
-             , TypeList (Fmap PostgresUniverse (Snds projected))
+             ( TypeList (Fmap PostgresUniverse (Snds projected))
              , Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
              , Every PFF.FromField (Fmap PostgresUniverse (Snds projected))
              )
@@ -101,8 +100,7 @@ instance RelationalInterpreter PostgresInterpreter where
                 lift (doQuery conn)
 
     type InterpreterDeleteConstraint PostgresInterpreter schema conditioned =
-             ( Every (InUniverse PostgresUniverse) (Snds conditioned)
-             , Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
+             ( Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
              ) 
 
     interpretDelete proxy (delete :: Delete '(tableName, schema) conditioned) =
@@ -116,8 +114,7 @@ instance RelationalInterpreter PostgresInterpreter where
                 return ()
 
     type InterpreterInsertConstraint PostgresInterpreter schema =
-             ( Every (InUniverse PostgresUniverse) (Snds schema)
-             , Every PTF.ToField (Fmap PostgresUniverse (Snds schema))
+             ( Every PTF.ToField (Fmap PostgresUniverse (Snds schema))
              )
 
     interpretInsert proxy (insert :: Insert '(tableName, schema)) =
@@ -133,9 +130,7 @@ instance RelationalInterpreter PostgresInterpreter where
                 return ()
 
     type InterpreterUpdateConstraint PostgresInterpreter schema projected conditioned =
-             ( Every (InUniverse PostgresUniverse) (Snds conditioned)
-             , Every (InUniverse PostgresUniverse) (Snds projected)
-             , Every PTF.ToField (Fmap PostgresUniverse (Snds projected))
+             ( Every PTF.ToField (Fmap PostgresUniverse (Snds projected))
              , Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
              )
 
