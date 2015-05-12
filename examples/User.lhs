@@ -80,7 +80,7 @@ With a user profile table in hand, we can define reads and mutations on it.
 >     Select
 >       userProfileTable
 >       (usernameColumn :+| fullnameColumn :+| birthdayColumn :+| EndProject)
->       (((usernameColumn .==. uname) .||. false) .&&. true)
+>       (usernameColumn .==. uname .||. false .&&. true)
 >
 > selectProfileByBirthday
 >   :: Birthday
@@ -92,7 +92,7 @@ With a user profile table in hand, we can define reads and mutations on it.
 >     Select
 >       userProfileTable
 >       (usernameColumn :+| fullnameColumn :+| birthdayColumn :+| EndProject)
->       (((birthdayColumn .==. birthday) .||. false) .&&. true)
+>       (birthdayColumn .==. birthday .||. false .&&. true)
 
 The Select constructor rules out many bad queries: every column in the
 projection (second type parameter) and condition (third type parameter)
@@ -121,7 +121,7 @@ condition.
 >     Select
 >       userProfileTable
 >       projection
->       (((birthdayColumn .<. birthday) .||. (birthdayColumn .==. birthday) .||. false) .&&. true)
+>       (birthdayColumn .<. birthday .||. birthdayColumn .==. birthday .||. false .&&. true)
 >
 > insertUserProfile :: UserProfile -> Insert UserProfileTable
 > insertUserProfile (UserProfile username fullname birthday) =
@@ -135,9 +135,9 @@ condition.
 >       userProfileTable
 >       (eqUsername .&&. eqFullname .&&. eqBirthday .&&. true)
 >   where
->     eqUsername = (usernameColumn .==. username) .||. false
->     eqFullname = (fullnameColumn .==. fullname) .||. false
->     eqBirthday = (birthdayColumn .==. birthday) .||. false
+>     eqUsername = usernameColumn .==. username .||. false
+>     eqFullname = fullnameColumn .==. fullname .||. false
+>     eqBirthday = birthdayColumn .==. birthday .||. false
 >
 > updateUserProfile
 >   :: Username
@@ -153,7 +153,7 @@ condition.
 >     Update
 >       userProfileTable
 >       (fullnameColumn :+| birthdayColumn :+| EndProject)
->       (((usernameColumn .==. username) .||. false) .&&. true)
+>       (usernameColumn .==. username .||. false .&&. true)
 >       (newFullname :> newBirthday :> HNil)
 
 In order to use the above definitions with an actual database, we need to
