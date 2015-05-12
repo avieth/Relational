@@ -30,7 +30,7 @@ import Data.Relational.Condition
 
 data Update table projected conditioned where
   Update
-    :: ( Subset conditioned schema ~ 'True
+    :: ( Subset (Concat conditioned) schema ~ 'True
        , SubsetUnique projected schema ~ 'True
        -- ^ A Project can have duplicate elements, but since a schema cannot,
        --   SubsetUnique projected schema implies that projected also cannot.

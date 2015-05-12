@@ -27,7 +27,7 @@ import Data.Relational.Condition
 
 data Delete table conditioned where
   Delete
-    :: ( Subset conditioned schema ~ 'True
+    :: ( Subset (Concat conditioned) schema ~ 'True
        )
     => Table '(sym, schema)
     -> Condition conditioned

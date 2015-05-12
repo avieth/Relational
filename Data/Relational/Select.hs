@@ -26,16 +26,17 @@ module Data.Relational.Select (
 
   ) where
 
+import GHC.TypeLits (Symbol)
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Project
 import Data.Relational.Condition
 
 -- | A selection from the database.
-data Select table selected conditioned where
+data Select table selected (conditioned :: [[(Symbol, *)]]) where
   Select
     :: ( Subset selected schema ~ 'True
-       , Subset conditioned schema ~ 'True
+       , Subset (Concat conditioned) schema ~ 'True
        )
     => Table '(tableName, schema)
     -> Project selected
