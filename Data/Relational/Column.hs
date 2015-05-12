@@ -17,6 +17,7 @@ Portability : non-portable (GHC only)
 module Data.Relational.Column (
 
     Column(..)
+  , column
   , columnName
 
   ) where
@@ -39,6 +40,9 @@ data Column :: (Symbol, *) -> * where
 instance Show (Column ts) where
   show col = case col of
       Column proxy _ -> symbolVal proxy
+
+column :: KnownSymbol sym => Column '(sym, t)
+column = Column Proxy Proxy
 
 -- | The name of a column; used to identify that column in queries.
 columnName :: Column '(sym, t) -> String
