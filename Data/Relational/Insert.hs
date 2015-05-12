@@ -22,7 +22,6 @@ module Data.Relational.Insert (
   ) where
 
 import Data.Relational.Types
-import Data.Relational.Universe
 import Data.Relational.Table
 
 data Insert table where

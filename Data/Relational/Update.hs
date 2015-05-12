@@ -24,7 +24,6 @@ module Data.Relational.Update (
   ) where
 
 import Data.Relational.Types
-import Data.Relational.Universe
 import Data.Relational.Table
 import Data.Relational.Project
 import Data.Relational.Condition
