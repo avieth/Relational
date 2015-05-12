@@ -36,6 +36,10 @@ import Data.Proxy
 data Column :: (Symbol, *) -> * where
   Column :: KnownSymbol sym => Proxy sym -> Proxy u -> Column '(sym, u)
 
+instance Show (Column ts) where
+  show col = case col of
+      Column proxy _ -> symbolVal proxy
+
 -- | The name of a column; used to identify that column in queries.
 columnName :: Column '(sym, t) -> String
 columnName (Column symbol _) = symbolVal symbol
