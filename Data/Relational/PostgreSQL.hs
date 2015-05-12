@@ -84,14 +84,14 @@ instance RelationalInterpreter PostgresInterpreter where
 
     type InterpreterSelectConstraint PostgresInterpreter schema projected conditioned =
              ( TypeList (Fmap PostgresUniverse (Snds projected))
-             , Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
+             , Every PTF.ToField (Fmap PostgresUniverse (Snds (Concat conditioned)))
              , Every PFF.FromField (Fmap PostgresUniverse (Snds projected))
              )
 
     interpretSelect proxy (select :: Select '(tableName, schema) projected conditioned) =
         let actualQuery :: P.Query
             actualQuery = fromString (makeSelectQuery select)
-            parameters :: HList (Fmap PostgresUniverse (Snds conditioned))
+            parameters :: HList (Fmap PostgresUniverse (Snds (Concat conditioned)))
             parameters = makeParametersFromCondition (selectCondition select)
             doQuery :: P.Connection -> IO [HList (Fmap PostgresUniverse (Snds projected))]
             doQuery = \conn -> P.query conn actualQuery parameters
@@ -100,13 +100,13 @@ instance RelationalInterpreter PostgresInterpreter where
                 lift (doQuery conn)
 
     type InterpreterDeleteConstraint PostgresInterpreter schema conditioned =
-             ( Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
+             ( Every PTF.ToField (Fmap PostgresUniverse (Snds (Concat conditioned)))
              ) 
 
     interpretDelete proxy (delete :: Delete '(tableName, schema) conditioned) =
         let statement :: P.Query
             statement = fromString (makeDeleteStatement delete)
-            parameters :: HList (Fmap PostgresUniverse (Snds conditioned))
+            parameters :: HList (Fmap PostgresUniverse (Snds (Concat conditioned)))
             parameters = makeParametersFromCondition (deleteCondition delete)
         in  PostgresMonad $ do
                 conn <- ask
@@ -131,13 +131,13 @@ instance RelationalInterpreter PostgresInterpreter where
 
     type InterpreterUpdateConstraint PostgresInterpreter schema projected conditioned =
              ( Every PTF.ToField (Fmap PostgresUniverse (Snds projected))
-             , Every PTF.ToField (Fmap PostgresUniverse (Snds conditioned))
+             , Every PTF.ToField (Fmap PostgresUniverse (Snds (Concat conditioned)))
              )
 
     interpretUpdate proxy (update :: Update '(tableName, schema) projected conditioned) =
         let statement :: P.Query
             statement = fromString (makeUpdateStatement update)
-            conditionParameters :: HList (Fmap PostgresUniverse (Snds conditioned))
+            conditionParameters :: HList (Fmap PostgresUniverse (Snds (Concat conditioned)))
             conditionParameters = makeParametersFromCondition (updateCondition update)
             assignmentParameters :: HList (Fmap PostgresUniverse (Snds projected))
             assignmentParameters = allToUniverse proxy (updateColumns update)
@@ -345,26 +345,33 @@ makeProjectionClause = concat . intersperse "," . makeSelectFields
         EmptyProject -> []
         ConsProject col rest -> columnName col : makeSelectFields rest
 
-makeConditionClause :: Condition cs -> String
+makeConditionClause :: Condition css -> String
 makeConditionClause constr = case constr of
-  EmptyCondition -> "1=1" -- Can we put "True" ? or "true" ?
+  AndCondition disjunction rest -> concat ["( ", makeDisjunctionClause disjunction, " ) AND ", makeConditionClause rest]
+  AlwaysTrue -> "1=1" -- Can we put "True" ? or "true" ?
+
+makeDisjunctionClause :: ConditionDisjunction cs -> String
+makeDisjunctionClause disj = case disj of
+  OrCondition terminal rest -> concat ["( ", makeTerminalClause terminal, ") OR ", makeDisjunctionClause rest]
+  AlwaysFalse -> "1=0" -- Can we put "False" ? or "false" ?
+
+makeTerminalClause :: ConditionTerminal t -> String
+makeTerminalClause term = case term of
   -- We use a ? because query parameter substitution shall be done by another
   -- system, namely postgresql-simple.
-  EqCondition col val -> concat [columnName col, " = ?"]
-  LtCondition col val -> concat [columnName col, " < ?"]
-  GtCondition col val -> concat [columnName col, " > ?"]
-  AndCondition left right -> concat [makeConditionClause left, " AND ", makeConditionClause right]
-  OrCondition left right -> concat [makeConditionClause left, " OR ", makeConditionClause right]
+  EqCondition field -> concat [columnName (fieldColumn field), " = ?"]
+  LtCondition field -> concat [columnName (fieldColumn field), " < ?"]
+  GtCondition field -> concat [columnName (fieldColumn field), " > ?"]
 
 makeParametersFromCondition
   :: forall conditions .
-     ( Every (InUniverse PostgresUniverse) (Snds conditions)
+     ( Every (InUniverse PostgresUniverse) (Snds (Concat conditions))
      )
   => Condition conditions
-  -> HList (Fmap PostgresUniverse (Snds conditions))
+  -> HList (Fmap PostgresUniverse (Snds (Concat conditions)))
 makeParametersFromCondition cs = allToUniverse proxy lst
   where
-    lst :: HList (Snds conditions)
+    lst :: HList (Snds (Concat conditions))
     lst = conditionValues cs
     proxy :: Proxy PostgresUniverse
     proxy = Proxy

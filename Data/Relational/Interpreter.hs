@@ -27,20 +27,20 @@ import Data.Relational
 class RelationalInterpreter t where
   data Universe t :: * -> *
   type InterpreterMonad t :: * -> *
-  type InterpreterSelectConstraint t (schema :: [(Symbol, *)]) (projected :: [(Symbol, *)]) (conditioned :: [(Symbol, *)]) :: Constraint
-  type InterpreterDeleteConstraint t (schema :: [(Symbol, *)]) (conditioned :: [(Symbol, *)]) :: Constraint
+  type InterpreterSelectConstraint t (schema :: [(Symbol, *)]) (projected :: [(Symbol, *)]) (conditioned :: [[(Symbol, *)]]) :: Constraint
+  type InterpreterDeleteConstraint t (schema :: [(Symbol, *)]) (conditioned :: [[(Symbol, *)]]) :: Constraint
   type InterpreterInsertConstraint t (schema :: [(Symbol, *)]) :: Constraint
-  type InterpreterUpdateConstraint t (schema :: [(Symbol, *)]) (projected :: [(Symbol, *)]) (conditioned :: [(Symbol, *)]) :: Constraint
+  type InterpreterUpdateConstraint t (schema :: [(Symbol, *)]) (projected :: [(Symbol, *)]) (conditioned :: [[(Symbol, *)]]) :: Constraint
   interpretSelect
     :: ( Every (InUniverse (Universe t)) (Snds projected)
-       , Every (InUniverse (Universe t)) (Snds conditioned)
+       , Every (InUniverse (Universe t)) (Snds (Concat conditioned))
        , InterpreterSelectConstraint t schema projected conditioned
        )
     => Proxy t
     -> Select '(tableName, schema) projected conditioned
     -> (InterpreterMonad t) [HList (Fmap (Universe t) (Snds projected))]
   interpretDelete
-    :: ( Every (InUniverse (Universe t)) (Snds conditioned)
+    :: ( Every (InUniverse (Universe t)) (Snds (Concat conditioned))
        , InterpreterDeleteConstraint t schema conditioned
        )
     => Proxy t
@@ -55,7 +55,7 @@ class RelationalInterpreter t where
     -> (InterpreterMonad t) ()
   interpretUpdate
     :: ( Every (InUniverse (Universe t)) (Snds projected)
-       , Every (InUniverse (Universe t)) (Snds conditioned)
+       , Every (InUniverse (Universe t)) (Snds (Concat conditioned))
        , InterpreterUpdateConstraint t schema projected conditioned
        )
     => Proxy t
