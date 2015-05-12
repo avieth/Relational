@@ -26,7 +26,6 @@ module Data.Relational.Select (
 
   ) where
 
-import Data.Proxy
 import Data.Relational.Types
 import Data.Relational.Universe
 import Data.Relational.Table
@@ -34,22 +33,21 @@ import Data.Relational.Project
 import Data.Relational.Condition
 
 -- | A selection from the database.
-data Select universe tableName selected conditioned schema where
+data Select table selected conditioned where
   Select
     :: ( Subset selected schema ~ 'True
        , Subset conditioned schema ~ 'True
        )
-    => Proxy universe
-    -> Table '(tableName, schema)
+    => Table '(tableName, schema)
     -> Project selected
     -> Condition conditioned
-    -> Select universe tableName selected conditioned schema
+    -> Select '(tableName, schema) selected conditioned
 
-selectTable :: Select universe tableName selected conditioned schema -> Table '(tableName, schema)
-selectTable (Select _ t _ _) = t
+selectTable :: Select '(tableName, schema) selected conditioned -> Table '(tableName, schema)
+selectTable (Select t _ _) = t
 
-selectProjection :: Select universe tableName selected conditioned schema -> Project selected
-selectProjection (Select _ _ p _) = p
+selectProjection :: Select '(tableName, schema) selected conditioned -> Project selected
+selectProjection (Select _ p _) = p
 
-selectCondition :: Select universe tableName selected conditioned schema -> Condition conditioned
-selectCondition (Select _ _ _ c) = c
+selectCondition :: Select '(tableName, schema) selected conditioned -> Condition conditioned
+selectCondition (Select _ _ c) = c

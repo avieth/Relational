@@ -23,41 +23,39 @@ module Data.Relational.Update (
 
   ) where
 
-import Data.Proxy
 import Data.Relational.Types
 import Data.Relational.Universe
 import Data.Relational.Table
 import Data.Relational.Project
 import Data.Relational.Condition
 
-data Update (universe :: * -> *) sym schema projected conditioned where
+data Update table projected conditioned where
   Update
     :: ( Subset conditioned schema ~ 'True
        , SubsetUnique projected schema ~ 'True
        -- ^ A Project can have duplicate elements, but since a schema cannot,
        --   SubsetUnique projected schema implies that projected also cannot.
        )
-    => Proxy universe
-    -> Table '(sym, schema)
+    => Table '(sym, schema)
     -> Project projected
     -> Condition conditioned
     -> HList (Snds projected)
     -- ^ The data to use in the update, corresponding to the columns isolated
     --   by the projection.
-    -> Update universe sym schema projected conditioned
+    -> Update '(sym, schema) projected conditioned
 
-updateTable :: Update universe sym schema projected conditioned -> Table '(sym, schema)
-updateTable (Update _ t _ _ _) = t
+updateTable :: Update '(sym, schema) projected conditioned -> Table '(sym, schema)
+updateTable (Update t _ _ _) = t
 
-updateProject :: Update universe sym schema projected conditioned -> Project projected
-updateProject (Update _ _ p _ _) = p
+updateProject :: Update '(sym, schema) projected conditioned -> Project projected
+updateProject (Update _ p _ _) = p
 
 updateColumns
-  :: Update universe sym schema projected conditioned
+  :: Update '(sym, schema) projected conditioned
   -> HList (Snds projected)
-updateColumns (Update _ _ _ _ r) = r
+updateColumns (Update _ _ _ r) = r
 
 updateCondition
-  :: Update universe sym schema projected conditioned
+  :: Update '(sym, schema) projected conditioned
   -> Condition conditioned
-updateCondition (Update _ _ _ c _) = c
+updateCondition (Update _ _ c _) = c

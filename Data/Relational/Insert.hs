@@ -21,21 +21,19 @@ module Data.Relational.Insert (
 
   ) where
 
-import Data.Proxy
 import Data.Relational.Types
 import Data.Relational.Universe
 import Data.Relational.Table
 
-data Insert (universe :: * -> *) sym schema where
+data Insert table where
   Insert
     :: ()
-    => Proxy universe
-    -> Table '(sym, schema)
+    => Table '(sym, schema)
     -> HList (Snds schema)
-    -> Insert universe sym schema
+    -> Insert '(sym, schema)
 
-insertTable :: Insert universe sym schema -> Table '(sym, schema)
-insertTable (Insert _ t _) = t
+insertTable :: Insert '(sym, schema) -> Table '(sym, schema)
+insertTable (Insert t _) = t
 
-insertRow :: Insert universe sym schema -> HList (Snds schema)
-insertRow (Insert _ _ r) = r
+insertRow :: Insert '(sym, schema) -> HList (Snds schema)
+insertRow (Insert _ r) = r

@@ -21,22 +21,20 @@ module Data.Relational.Delete (
 
   ) where
 
-import Data.Proxy
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Condition
 
-data Delete (universe :: * -> *) sym schema conditioned where
+data Delete table conditioned where
   Delete
     :: ( Subset conditioned schema ~ 'True
        )
-    => Proxy universe
-    -> Table '(sym, schema)
+    => Table '(sym, schema)
     -> Condition conditioned
-    -> Delete universe sym schema conditioned
+    -> Delete '(sym, schema) conditioned
 
-deleteTable :: Delete universe sym schema conditioned -> Table '(sym, schema)
-deleteTable (Delete _ t _) = t
+deleteTable :: Delete '(sym, schema) conditioned -> Table '(sym, schema)
+deleteTable (Delete t _) = t
 
-deleteCondition :: Delete universe sym schema conditioned -> Condition conditioned
-deleteCondition (Delete _ _ c) = c
+deleteCondition :: Delete '(sym, schema) conditioned -> Condition conditioned
+deleteCondition (Delete _ c) = c
