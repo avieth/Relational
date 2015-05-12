@@ -37,6 +37,8 @@ module Data.Relational.Condition (
   , (.>.)
   , (.&&.)
   , (.||.)
+  , true
+  , false
 
   , RemoveTerminalConditions(..)
   , DropEmptyDisjuncts(..)
@@ -90,9 +92,13 @@ instance (Show (Snd t)) => Show (ConditionTerminal t) where
 
 -- | Extract the values used in a Condition, i.e. the reference values for
 --   equality and ordering.
-conditionValues :: Condition cs -> HList (Concat (Snds2 cs))
+conditionValues :: Condition cs -> HList (Snds (Concat cs))
 conditionValues cdn = case cdn of
-    AndCondition disjunct rest -> appendHList (conditionValuesDisjunct disjunct) (conditionValues rest)
+    -- We know that
+    --   (Snds (Append ts (Concat tss)) ~ Append (Snds ts) (Snds (Concat tss)))
+    -- but GHC does not, so unsafeCoerce saves the day.
+    AndCondition disjunct rest -> unsafeCoerce (appendHList (conditionValuesDisjunct disjunct) (conditionValues rest))
+    AlwaysTrue -> HNil
 
 conditionValuesDisjunct :: ConditionDisjunction cs -> HList (Snds cs)
 conditionValuesDisjunct disjunct = case disjunct of
@@ -100,6 +106,7 @@ conditionValuesDisjunct disjunct = case disjunct of
     --   Snds (t : ts) ~ Append '[Snd t] (Snds ts)
     -- but GHC does not, so we must unsafeCoerce
     OrCondition terminal rest -> unsafeCoerce (appendHList (conditionValueTerminal terminal) (conditionValuesDisjunct rest))
+    AlwaysFalse -> HNil
 
 conditionValueTerminal :: ConditionTerminal t -> HList '[Snd t]
 conditionValueTerminal terminal = case terminal of
@@ -127,6 +134,9 @@ infixr 8 .>.
 
 (.||.) :: ConditionTerminal c -> ConditionDisjunction cs -> ConditionDisjunction (c ': cs)
 (.||.) = OrCondition
+
+true = AlwaysTrue
+false = AlwaysFalse
 
 -- Now, to juggle Conditions like we do Projects and Rows.
 -- We have a list of the form [[(Symbol, *)]]. What can we do with it?
