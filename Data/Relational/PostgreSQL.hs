@@ -115,13 +115,16 @@ instance RelationalInterpreter PostgresInterpreter where
 
     type InterpreterInsertConstraint PostgresInterpreter schema =
              ( Every PTF.ToField (Fmap PostgresUniverse (Snds schema))
+             , RowToHList schema
              )
 
     interpretInsert proxy (insert :: Insert '(tableName, schema)) =
         let statement :: P.Query
             statement = fromString (makeInsertStatement insert)
+            hlist :: HList (Snds schema)
+            hlist = rowToHList (insertRow insert)
             parameters :: HList (Fmap PostgresUniverse (Snds schema))
-            parameters = allToUniverse proxy (insertRow insert)
+            parameters = allToUniverse proxy hlist
             proxy :: Proxy PostgresUniverse
             proxy = Proxy
         in  PostgresMonad $ do
@@ -132,6 +135,7 @@ instance RelationalInterpreter PostgresInterpreter where
     type InterpreterUpdateConstraint PostgresInterpreter schema projected conditioned =
              ( Every PTF.ToField (Fmap PostgresUniverse (Snds projected))
              , Every PTF.ToField (Fmap PostgresUniverse (Snds (Concat conditioned)))
+             , RowToHList projected
              )
 
     interpretUpdate proxy (update :: Update '(tableName, schema) projected conditioned) =
@@ -139,8 +143,10 @@ instance RelationalInterpreter PostgresInterpreter where
             statement = fromString (makeUpdateStatement update)
             conditionParameters :: HList (Fmap PostgresUniverse (Snds (Concat conditioned)))
             conditionParameters = makeParametersFromCondition (updateCondition update)
+            hlist :: HList (Snds projected)
+            hlist = rowToHList (updateColumns update)
             assignmentParameters :: HList (Fmap PostgresUniverse (Snds projected))
-            assignmentParameters = allToUniverse proxy (updateColumns update)
+            assignmentParameters = allToUniverse proxy hlist
             parameters = assignmentParameters PT.:. conditionParameters
             proxy :: Proxy PostgresUniverse
             proxy = Proxy
