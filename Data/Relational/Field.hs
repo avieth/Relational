@@ -24,6 +24,7 @@ module Data.Relational.Field (
     Field(..)
   , fieldValue
   , fieldColumn
+  , fromColumnAndValue
 
   ) where
 
@@ -44,3 +45,6 @@ fieldValue (Field _ x) = x
 
 fieldColumn :: Field '(sym, t) -> Column '(sym, t)
 fieldColumn (Field proxy _) = Column proxy (Proxy :: Proxy t)
+
+fromColumnAndValue :: Column '(sym, t) -> t -> Field '(sym, t)
+fromColumnAndValue (Column proxy _) = Field proxy
