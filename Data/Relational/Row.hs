@@ -27,6 +27,9 @@ module Data.Relational.Row (
   , pattern EndRow
   , pattern (:&|)
 
+  , RowToHList
+  , rowToHList
+
   , RestoreRowField(..)
   , SwapRowFields(..)
   , MergeRowFields(..)
@@ -56,6 +59,16 @@ pattern EndRow = EmptyRow
 
 infixr 9 :&|
 pattern columnAndValue :&| rest = ConsRow columnAndValue rest
+
+class RowToHList (ts :: [(Symbol, *)]) where
+  rowToHList :: Row ts -> HList (Snds ts)
+
+instance RowToHList '[] where
+  rowToHList EndRow = HNil
+
+instance RowToHList ts => RowToHList ( '(sym, t) ': ts ) where
+  rowToHList (field :&| rest) = (fieldValue field) :> (rowToHList rest)
+
 
 class RestoreRowField (t :: (Symbol, *)) (ts :: [(Symbol, *)]) (ss :: [(Symbol, *)]) where
     restoreRowField :: Proxy ss -> Field t -> Row ts -> Row (Restore t ts ss)

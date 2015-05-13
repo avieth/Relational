@@ -23,16 +23,17 @@ module Data.Relational.Insert (
 
 import Data.Relational.Types
 import Data.Relational.Table
+import Data.Relational.Row
 
 data Insert table where
   Insert
     :: ()
     => Table '(sym, schema)
-    -> HList (Snds schema)
+    -> Row schema
     -> Insert '(sym, schema)
 
 insertTable :: Insert '(sym, schema) -> Table '(sym, schema)
 insertTable (Insert t _) = t
 
-insertRow :: Insert '(sym, schema) -> HList (Snds schema)
+insertRow :: Insert '(sym, schema) -> Row schema
 insertRow (Insert _ r) = r
