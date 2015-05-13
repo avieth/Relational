@@ -17,6 +17,9 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
+
+  ghc-options:       -XOverlappingInstances
+
   exposed-modules:     Data.Relational
                      , Data.Relational.Types
                      , Data.Relational.Universe
@@ -47,6 +50,7 @@ library
                      , KindSignatures
                      , TypeOperators
                      , UndecidableInstances
+                     , OverlappingInstances
                      , ConstraintKinds
                      , GeneralizedNewtypeDeriving
                      , DeriveFunctor
