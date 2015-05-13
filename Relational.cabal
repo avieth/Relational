@@ -28,6 +28,7 @@ library
                      , Data.Relational.Column
                      , Data.Relational.Row
                      , Data.Relational.Table
+                     , Data.Relational.Database
                      , Data.Relational.Select
                      , Data.Relational.Insert
                      , Data.Relational.Delete

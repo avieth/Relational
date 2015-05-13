@@ -15,10 +15,11 @@ module Data.Relational (
   , module Data.Relational.Column
   , module Data.Relational.Field
   , module Data.Relational.Schema
-  , module Data.Relational.Table
   , module Data.Relational.Condition
   , module Data.Relational.Project
   , module Data.Relational.Row
+  , module Data.Relational.Table
+  , module Data.Relational.Database
   , module Data.Relational.Select
   , module Data.Relational.Insert
   , module Data.Relational.Delete
@@ -31,10 +32,11 @@ import Data.Relational.Universe
 import Data.Relational.Column
 import Data.Relational.Field
 import Data.Relational.Schema
-import Data.Relational.Table
 import Data.Relational.Condition
 import Data.Relational.Project
 import Data.Relational.Row
+import Data.Relational.Table
+import Data.Relational.Database
 import Data.Relational.Select
 import Data.Relational.Insert
 import Data.Relational.Delete
