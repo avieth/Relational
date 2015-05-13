@@ -27,6 +27,7 @@ import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Project
 import Data.Relational.Condition
+import Data.Relational.Row
 
 data Update table projected conditioned where
   Update
@@ -38,7 +39,7 @@ data Update table projected conditioned where
     => Table '(sym, schema)
     -> Project projected
     -> Condition conditioned
-    -> HList (Snds projected)
+    -> Row projected
     -- ^ The data to use in the update, corresponding to the columns isolated
     --   by the projection.
     -> Update '(sym, schema) projected conditioned
@@ -51,7 +52,7 @@ updateProject (Update _ p _ _) = p
 
 updateColumns
   :: Update '(sym, schema) projected conditioned
-  -> HList (Snds projected)
+  -> Row projected
 updateColumns (Update _ _ _ r) = r
 
 updateCondition
