@@ -32,6 +32,9 @@ module Data.Relational.Condition (
 
   , conditionValues
 
+  , AppendCondition
+  , appendCondition
+
   , (.==.)
   , (.<.)
   , (.>.)
@@ -113,6 +116,27 @@ conditionValueTerminal terminal = case terminal of
     EqCondition field -> fieldValue field :> HNil
     LtCondition field -> fieldValue field :> HNil
     GtCondition field -> fieldValue field :> HNil
+
+class AppendCondition t xs ys where
+  appendCondition :: t xs -> t ys -> t (Append xs ys)
+
+instance AppendCondition ConditionDisjunction '[] ys where
+  appendCondition _ ys = ys
+
+instance AppendCondition ConditionDisjunction xs ys => AppendCondition ConditionDisjunction (x ': xs) ys where
+  -- (Append (t : ts) ys ~ (t : Append ts ys))
+  -- GHC cannot deduce that, but I can. So unsafeCoerce
+  appendCondition (OrCondition left right) right' = unsafeCoerce $
+      OrCondition left (appendCondition right right')
+
+instance AppendCondition ConditionConjunction '[] ys where
+  appendCondition _ ys = ys
+
+instance AppendCondition ConditionConjunction xs ys => AppendCondition ConditionConjunction (x ': xs) ys where
+  -- Append (ts : tss) ys ~ (ts : Append tss ys)
+  -- Must unsafeCoerce past this obvious fact.
+  appendCondition (AndCondition left right) right' = unsafeCoerce $
+      AndCondition left (appendCondition right right')
 
 infixr 7 .&&.
 infixr 8 .||.
