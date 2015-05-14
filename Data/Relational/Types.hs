@@ -25,6 +25,8 @@ in the repository.
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Data.Relational.Types (
 
@@ -40,9 +42,8 @@ module Data.Relational.Types (
   , Swap
   , Merge
   , Elem
-  , Subset
   , IsSubset
-  , SubsetUnique
+  , IsSubsetUnique
   , Remove
   , Restore
   , RemoveAll
@@ -51,7 +52,6 @@ module Data.Relational.Types (
   , Replace
   , And
   , IfElse
-  , Union
   , Append
   , Every
   , Fmap
@@ -115,29 +115,20 @@ type family Merge (t :: k) (s :: k) (u :: k) (xs :: [k]) :: [k] where
   Merge x y z (x ': y ': xs) = z ': xs
   Merge x y z (w ': xs) = w ': (Merge x y z xs)
 
-type family Elem (x :: k) (xs :: [k]) :: Bool where
-  Elem x '[] = 'False
-  Elem x (x ': xs) = 'True
-  Elem x (y ': xs) = Elem x xs
-
--- | Duplicate elements are ignored, so [Bool, Bool] is a subset of [Bool], for
---   example
-type family Subset (xs :: [k]) (ys :: [k]) :: Bool where
-  Subset '[] ys = 'True
-  Subset (x ': xs) ys = And (Elem x ys) (Subset xs ys)
-  -- This clause demands UndecidableInstances, but it's OK. It will
-  -- terminate for finite lists.
+class Elem (x :: k) (xs :: [k])
+instance Elem x (x ': xs)
+instance Elem x xs => Elem x (y ': xs)
 
 -- | Like Subset, duplicates are ignored.
 type family IsSubset (xs :: [k]) (ys :: [k]) :: Constraint where
   IsSubset '[] ys = ()
-  IsSubset (x ': xs) ys = (Elem x ys ~ 'True, IsSubset xs ys)
+  IsSubset (x ': xs) ys = (Elem x ys, IsSubset xs ys)
 
 -- | Like Subset but duplicates are not ignores, so that [Bool, Bool] is not
 --   a subset of [Bool], but [Bool, Int] is a subset of [Bool, Bool, Int, Int].
-type family SubsetUnique (xs :: [k]) (ys :: [k]) :: Bool where
-  SubsetUnique '[] ys = 'True
-  SubsetUnique (x ': xs) ys = And (Elem x ys) (SubsetUnique xs (Remove x ys))
+type family IsSubsetUnique (xs :: [k]) (ys :: [k]) :: Constraint where
+  IsSubsetUnique '[] ys = ()
+  IsSubsetUnique (x ': xs) ys = (Elem x ys, IsSubsetUnique xs (Remove x ys))
 
 -- | Remove the first occurrence in a list, and only the first.
 type family Remove (x :: k) (xs :: [k]) :: [k] where
@@ -197,11 +188,6 @@ type family And (x :: Bool) (y :: Bool) :: Bool where
 type family IfElse (x :: Bool) (y :: k) (z :: k) :: k where
   IfElse 'True a b = a
   IfElse 'False a b = b
-
-type family Union (xs :: [k]) (ys :: [k]) :: [k] where
-  Union '[] ys = ys
-  Union xs '[] = xs
-  Union (x ': xs) ys = IfElse (Elem x ys) ys (Union xs (x ': ys))
 
 type family Append (xs :: [k]) (ys :: [k]) :: [k] where
   Append '[] ys = ys

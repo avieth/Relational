@@ -88,3 +88,5 @@ instance RemoveProjectColumn t ts => RemoveProjectColumn t (s ': ts) where
     -- specific instance for t (t ': ts) would have been hit.
     -- unsafeCoerce should be safe here.
     removeProjectColumn proxyT (col :+| rest) = unsafeCoerce (col :+| (removeProjectColumn proxyT rest))
+
+-- TBD will it be useful to add a swapping mechanism like we have for Rows?

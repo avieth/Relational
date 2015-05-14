@@ -16,6 +16,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Data.Relational.Select (
 
@@ -35,8 +36,8 @@ import Data.Relational.Condition
 -- | A selection from the database.
 data Select table selected (conditioned :: [[(Symbol, *)]]) where
   Select
-    :: ( Subset selected schema ~ 'True
-       , Subset (Concat conditioned) schema ~ 'True
+    :: ( IsSubset selected schema
+       , IsSubset (Concat conditioned) schema
        )
     => Table '(tableName, schema)
     -> Project selected

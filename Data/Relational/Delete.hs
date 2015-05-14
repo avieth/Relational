@@ -12,6 +12,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Data.Relational.Delete (
 
@@ -27,7 +28,7 @@ import Data.Relational.Condition
 
 data Delete table conditioned where
   Delete
-    :: ( Subset (Concat conditioned) schema ~ 'True
+    :: ( IsSubset (Concat conditioned) schema
        )
     => Table '(sym, schema)
     -> Condition conditioned

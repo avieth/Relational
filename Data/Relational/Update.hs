@@ -12,6 +12,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Data.Relational.Update (
 
@@ -31,8 +32,8 @@ import Data.Relational.Row
 
 data Update table projected conditioned where
   Update
-    :: ( Subset (Concat conditioned) schema ~ 'True
-       , SubsetUnique projected schema ~ 'True
+    :: ( IsSubset (Concat conditioned) schema
+       , IsSubsetUnique projected schema
        -- ^ A Project can have duplicate elements, but since a schema cannot,
        --   SubsetUnique projected schema implies that projected also cannot.
        )
