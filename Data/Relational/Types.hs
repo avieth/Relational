@@ -27,6 +27,8 @@ in the repository.
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverlappingInstances #-}
 
 module Data.Relational.Types (
 
@@ -42,6 +44,7 @@ module Data.Relational.Types (
   , Swap
   , Merge
   , Elem
+  , elemConstraint
   , IsSubset
   , IsSubsetUnique
   , Remove
@@ -115,9 +118,26 @@ type family Merge (t :: k) (s :: k) (u :: k) (xs :: [k]) :: [k] where
   Merge x y z (x ': y ': xs) = z ': xs
   Merge x y z (w ': xs) = w ': (Merge x y z xs)
 
-class Elem (x :: k) (xs :: [k])
-instance Elem x (x ': xs)
-instance Elem x xs => Elem x (y ': xs)
+class Elem (x :: k) (xs :: [k]) where
+  -- | This class function allows us to combine Elem and Every constraints. If
+  --   we know that x is in xs, and every xs satisfies c, then we can pull c x
+  --   out.
+  elemConstraint
+    :: (Every c xs)
+    => Proxy c
+    -> Proxy x
+    -> Proxy xs
+    -> (c x => t)
+    -> t
+
+instance Elem x (x ': xs) where
+  elemConstraint _ _ _ f = f
+
+instance Elem x xs => Elem x (y ': xs) where
+  elemConstraint proxyC proxyX _ f = elemConstraint proxyC proxyX proxyXS f
+    where
+      proxyXS :: Proxy xs
+      proxyXS = Proxy
 
 -- | Like Subset, duplicates are ignored.
 type family IsSubset (xs :: [k]) (ys :: [k]) :: Constraint where
