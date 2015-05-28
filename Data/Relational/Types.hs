@@ -45,6 +45,8 @@ module Data.Relational.Types (
   , Merge
   , Elem
   , elemConstraint
+  , Elem'
+  , elemConstraint'
   , IsSubset
   , IsSubsetUnique
   , Remove
@@ -138,6 +140,23 @@ instance Elem x xs => Elem x (y ': xs) where
     where
       proxyXS :: Proxy xs
       proxyXS = Proxy
+
+-- | Same as Elem, but with arguments flipped. Useful if you want to write
+--   Every (Elem xs) ys
+class Elem' (xs :: [*]) (x :: *) where
+    elemConstraint'
+      :: (Every c xs)
+      => Proxy c
+      -> Proxy x
+      -> Proxy xs
+      -> (c x => t)
+      -> t
+
+instance Elem' (x ': xs) x where
+    elemConstraint' proxyC proxyX proxyXS t = t
+
+instance Elem' xs x => Elem' (y ': xs) x where
+    elemConstraint' proxyC proxyX _ = elemConstraint' proxyC proxyX (Proxy :: Proxy xs)
 
 -- | Like Subset, duplicates are ignored.
 type family IsSubset (xs :: [k]) (ys :: [k]) :: Constraint where
