@@ -22,6 +22,7 @@ library
 
   exposed-modules:     Data.Relational
                      , Data.Relational.Types
+                     , Data.Relational.Contains
                      , Data.Relational.Condition
                      , Data.Relational.Project
                      , Data.Relational.Schema

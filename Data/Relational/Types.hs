@@ -44,9 +44,9 @@ module Data.Relational.Types (
   , Swap
   , Merge
   , Elem
+  , ElemProof(..)
   , elemConstraint
-  , Elem'
-  , elemConstraint'
+  , fmapElemProof
   , IsSubset
   , IsSubsetUnique
   , Remove
@@ -59,13 +59,17 @@ module Data.Relational.Types (
   , IfElse
   , Append
   , Every
+  , EveryConstraint(..)
   , Fmap
   , FmapSingletonList
   , HList(..)
   , pattern HNil
   , pattern (:>)
   , appendHList
-  , TypeList(..)
+  , TypeList
+  , typeListFoldr
+  , typeListFmapProof
+  , TypeListProof(..)
 
   ) where
 
@@ -98,14 +102,12 @@ type family Snds2 (ss :: [[(k, l)]]) :: [[l]] where
 type family Concat (xs :: [[k]]) :: [k] where
   Concat '[] = '[]
   Concat (x ': xs) = Append x (Concat xs)
-  --Concat ('[] ': xs) = Concat xs
-  --Concat ((x ': xs) ': xss) = x ': (Concat (xs ': xss))
-  --Concat ((x ': xs) ': xss) = x ': (Concat (xs ': xss))
 
 type family Head (xs :: [k]) :: k where
   Head (x ': xs) = x
 
 type family Tail (xs :: [k]) :: [k] where
+  Tail '[] = '[]
   Tail (x ': xs) = xs
 
 -- | Find the leftmost occurrence of something in the list and swap it to the
@@ -120,6 +122,7 @@ type family Merge (t :: k) (s :: k) (u :: k) (xs :: [k]) :: [k] where
   Merge x y z (x ': y ': xs) = z ': xs
   Merge x y z (w ': xs) = w ': (Merge x y z xs)
 
+-- TODO use the EveryConstraint GADT like we do in Contains.
 class Elem (x :: k) (xs :: [k]) where
   -- | This class function allows us to combine Elem and Every constraints. If
   --   we know that x is in xs, and every xs satisfies c, then we can pull c x
@@ -132,8 +135,16 @@ class Elem (x :: k) (xs :: [k]) where
     -> (c x => t)
     -> t
 
+  fmapElemProof
+    :: ()
+    => Proxy f
+    -> Proxy x
+    -> Proxy xs
+    -> ElemProof (f x) (Fmap f xs)
+
 instance Elem x (x ': xs) where
   elemConstraint _ _ _ f = f
+  fmapElemProof _ _ _ = ElemProof
 
 instance Elem x xs => Elem x (y ': xs) where
   elemConstraint proxyC proxyX _ f = elemConstraint proxyC proxyX proxyXS f
@@ -141,29 +152,20 @@ instance Elem x xs => Elem x (y ': xs) where
       proxyXS :: Proxy xs
       proxyXS = Proxy
 
--- | Same as Elem, but with arguments flipped. Useful if you want to write
---   Every (Elem xs) ys
-class Elem' (xs :: [*]) (x :: *) where
-    elemConstraint'
-      :: (Every c xs)
-      => Proxy c
-      -> Proxy x
-      -> Proxy xs
-      -> (c x => t)
-      -> t
+  fmapElemProof proxyF proxyX proxyYXS = case fmapElemProof proxyF proxyX proxyXS of
+      ElemProof -> ElemProof
+    where
+      proxyXS :: Proxy xs
+      proxyXS = Proxy
 
-instance Elem' (x ': xs) x where
-    elemConstraint' proxyC proxyX proxyXS t = t
+data ElemProof (x :: k) (xs :: [k]) where
+  ElemProof :: Elem x xs => ElemProof x xs
 
-instance Elem' xs x => Elem' (y ': xs) x where
-    elemConstraint' proxyC proxyX _ = elemConstraint' proxyC proxyX (Proxy :: Proxy xs)
-
--- | Like Subset, duplicates are ignored.
 type family IsSubset (xs :: [k]) (ys :: [k]) :: Constraint where
   IsSubset '[] ys = ()
   IsSubset (x ': xs) ys = (Elem x ys, IsSubset xs ys)
 
--- | Like Subset but duplicates are not ignores, so that [Bool, Bool] is not
+-- | Like IsSubset but duplicates are not ignored, so that [Bool, Bool] is not
 --   a subset of [Bool], but [Bool, Int] is a subset of [Bool, Bool, Int, Int].
 type family IsSubsetUnique (xs :: [k]) (ys :: [k]) :: Constraint where
   IsSubsetUnique '[] ys = ()
@@ -237,6 +239,10 @@ type family Every (c :: k -> Constraint) (xs :: [k]) :: Constraint where
   Every c '[] = ()
   Every c (x ': xs) = (c x, Every c xs)
 
+-- | Just a GADT to hold an Every c xs constraint.
+data EveryConstraint (c :: k -> Constraint) (xs :: [k]) where
+  EveryConstraint :: Every c xs => EveryConstraint c xs
+
 type family Fmap (f :: k -> l) (xs :: [k]) :: [l] where
   Fmap f '[] = '[]
   Fmap f (x ': xs) = f x ': (Fmap f xs)
@@ -267,6 +273,7 @@ instance (Every Show types) => Show (HList types) where
       x :> rest -> concat [show x, " :> ", show rest]
 
 class TypeList lst where
+
   typeListFoldr
     :: Every c lst
     => (forall t ts . c t => Proxy t -> a ts -> a (t ': ts))
@@ -275,8 +282,16 @@ class TypeList lst where
     -> Proxy c
     -> a lst
 
+  -- This is an interesting idea! Offer an "upgrade" through an Fmap.
+  typeListFmapProof
+    :: ()
+    => Proxy f
+    -> Proxy lst
+    -> TypeListProof (Fmap f lst)
+
 instance TypeList '[] where
   typeListFoldr f b proxyList proxyConstraint = b
+  typeListFmapProof _ _ = TypeListProof
 
 instance TypeList ts => TypeList (t ': ts) where
   typeListFoldr f b proxy proxyConstraint =
@@ -286,3 +301,11 @@ instance TypeList ts => TypeList (t ': ts) where
       proxyHead = Proxy
       proxyTail :: Proxy ts
       proxyTail = Proxy
+  typeListFmapProof proxyF proxyLst = case typeListFmapProof proxyF proxyTail of
+      TypeListProof -> TypeListProof
+    where
+      proxyTail :: Proxy ts
+      proxyTail = Proxy
+
+data TypeListProof (ts :: [k]) where
+  TypeListProof :: TypeList ts => TypeListProof ts
