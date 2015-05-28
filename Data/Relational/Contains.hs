@@ -71,19 +71,20 @@ instance Contains xs '[] where
 instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
 
     containsConstraint proxyC proxyXS proxyXYS =
-        case (here, there) of
-            (EveryConstraint, EveryConstraint) -> EveryConstraint
+        case elemConstraintProof of
+            HasConstraint -> case there of
+                EveryConstraint -> EveryConstraint
       where
-        here = containsConstraint proxyC proxyXS (Proxy :: Proxy ys)
-        there = containsConstraint proxyC proxyXS (Proxy :: Proxy '[x])
+        elemConstraintProof = elemHasConstraint proxyC proxyX proxyXS
+        there = containsConstraint proxyC proxyXS (Proxy :: Proxy ys)
+        proxyX :: Proxy x
+        proxyX = Proxy
 
-    fmapContainsProof proxyF proxyXS proxyXYS =
-        case (elem) of
-            ElemProof -> case (here, there) of
-                (ContainsProof, ContainsProof) -> ContainsProof
+    fmapContainsProof proxyF proxyXS proxyXYS = case (elem) of
+        ElemProof -> case (there) of
+            ContainsProof -> ContainsProof
       where
         elem = fmapElemProof proxyF proxyX proxyXS
-        here = fmapContainsProof proxyF proxyXS proxyLX
         there = fmapContainsProof proxyF proxyXS proxyYS 
         proxyLX :: Proxy '[x]
         proxyLX = Proxy

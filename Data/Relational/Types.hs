@@ -43,9 +43,11 @@ module Data.Relational.Types (
   , Tail
   , Swap
   , Merge
+  , HasConstraint(..)
   , Elem
   , ElemProof(..)
   , elemConstraint
+  , elemHasConstraint
   , fmapElemProof
   , IsSubset
   , IsSubsetUnique
@@ -122,6 +124,9 @@ type family Merge (t :: k) (s :: k) (u :: k) (xs :: [k]) :: [k] where
   Merge x y z (x ': y ': xs) = z ': xs
   Merge x y z (w ': xs) = w ': (Merge x y z xs)
 
+data HasConstraint (c :: k -> Constraint) (x :: k) where
+  HasConstraint :: c x => HasConstraint c x
+
 -- TODO use the EveryConstraint GADT like we do in Contains.
 class Elem (x :: k) (xs :: [k]) where
   -- | This class function allows us to combine Elem and Every constraints. If
@@ -135,6 +140,13 @@ class Elem (x :: k) (xs :: [k]) where
     -> (c x => t)
     -> t
 
+  elemHasConstraint
+    :: (Every c xs)
+    => Proxy c
+    -> Proxy x
+    -> Proxy xs
+    -> HasConstraint c x
+
   fmapElemProof
     :: ()
     => Proxy f
@@ -144,10 +156,16 @@ class Elem (x :: k) (xs :: [k]) where
 
 instance Elem x (x ': xs) where
   elemConstraint _ _ _ f = f
+  elemHasConstraint _ _ _ = HasConstraint
   fmapElemProof _ _ _ = ElemProof
 
 instance Elem x xs => Elem x (y ': xs) where
   elemConstraint proxyC proxyX _ f = elemConstraint proxyC proxyX proxyXS f
+    where
+      proxyXS :: Proxy xs
+      proxyXS = Proxy
+
+  elemHasConstraint proxyC proxyX _ = elemHasConstraint proxyC proxyX proxyXS
     where
       proxyXS :: Proxy xs
       proxyXS = Proxy
