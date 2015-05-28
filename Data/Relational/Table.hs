@@ -19,6 +19,7 @@ Portability : non-portable (GHC only)
 module Data.Relational.Table (
 
     Table(..)
+  , table
   , tableName
   , tableSchema
 
@@ -31,6 +32,9 @@ import Data.Relational.Schema
 -- | A name (Symbol) and a schema give a Table.
 data Table :: (Symbol, [(Symbol, *)]) -> * where
   Table :: KnownSymbol sym => Proxy sym -> Schema xs -> Table '(sym, xs)
+
+table :: KnownSymbol sym => Schema xs -> Table '(sym, xs)
+table schema = Table Proxy schema
 
 -- | The name of a Table.
 tableName :: Table '(sym, t) -> String
