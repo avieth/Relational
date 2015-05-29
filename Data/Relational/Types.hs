@@ -72,6 +72,8 @@ module Data.Relational.Types (
   , typeListFoldr
   , typeListFmapProof
   , TypeListProof(..)
+  , HasDuplicates
+  , Unique
 
   ) where
 
@@ -327,3 +329,15 @@ instance TypeList ts => TypeList (t ': ts) where
 
 data TypeListProof (ts :: [k]) where
   TypeListProof :: TypeList ts => TypeListProof ts
+
+-- Recurse on the first list, at each element recursing through the second
+-- list. The third list is there to replace the second list once it's
+-- exhausted.
+type family HasDuplicates (xs :: [k]) (ys :: [k]) (zs :: [k]) :: Bool where
+    HasDuplicates '[] xs zs = 'False
+    HasDuplicates (x ': xs) '[] '[] = 'False
+    HasDuplicates (x ': xs) '[] (z ': zs) = HasDuplicates xs zs zs
+    HasDuplicates (x ': xs) (x ': ys) zs = 'True
+    HasDuplicates (x ': xs) (y ': ys) zs = HasDuplicates (x ': xs) ys zs
+
+type Unique xs = (HasDuplicates xs (Tail xs) (Tail xs)) ~ 'False
