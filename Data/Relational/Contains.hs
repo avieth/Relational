@@ -36,7 +36,7 @@ import Data.Relational.Types
 
 -- | Every element of @ys@ is in @xs@, ignoring duplicates, so that @xs@ is
 --   not necessarily bigger than @ys@.
-class Contains (xs :: [*]) (ys :: [*]) where
+class Contains (xs :: [k]) (ys :: [k]) where
 
     containsConstraint
       :: (Every c xs)
@@ -101,5 +101,5 @@ instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
         proxyYS :: Proxy ys
         proxyYS = Proxy
 
-data ContainsProof (xs :: [*]) (ys :: [*]) where
+data ContainsProof (xs :: [k]) (ys :: [k]) where
   ContainsProof :: Contains xs ys => ContainsProof xs ys
