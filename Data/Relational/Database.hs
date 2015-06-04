@@ -15,6 +15,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Data.Relational.Database (
@@ -27,13 +28,19 @@ module Data.Relational.Database (
   , AddTable
   , AddTables
   , TableNames
+  , DatabaseUnion
 
   , HasDuplicates
   , Unique
 
+  , ContainsDatabase
+  , ContainsTable
+  , ContainsSchemaTypes
+
   ) where
 
 import GHC.TypeLits (Symbol)
+import GHC.Exts (Constraint)
 import Data.Relational.Types
 import Data.Relational.Table
 
@@ -72,3 +79,16 @@ type family AddTables (tbls :: [(Symbol, [(Symbol, *)])]) (db :: [(Symbol, [(Sym
 type family TableNames (db :: [(Symbol, [(Symbol, *)])]) :: [Symbol] where
     TableNames '[] = '[]
     TableNames ('(tableName, schema) ': rest) = tableName ': (TableNames rest)
+
+type DatabaseUnion (dbs :: [[(Symbol, [(Symbol, *)])]]) = Concat dbs
+
+type family ContainsDatabase (dbContainer :: [(Symbol, [(Symbol, *)])]) (dbContained :: [(Symbol, [(Symbol, *)])]) :: Constraint where
+    ContainsDatabase db '[] = ()
+    ContainsDatabase db (table ': rest) = (ContainsTable db table, ContainsDatabase db rest)
+
+type family ContainsTable (dbContainer :: [(Symbol, [(Symbol, *)])]) (table :: (Symbol, [(Symbol, *)])) :: Constraint where
+    ContainsTable db '(tableName, schema) = (Elem '(tableName, schema) db, ContainsSchemaTypes db schema)
+
+type family ContainsSchemaTypes (dbContainer :: [(Symbol, [(Symbol, *)])]) (schema :: [(Symbol, *)]) :: Constraint where
+    ContainsSchemaTypes db '[] = ()
+    ContainsSchemaTypes db ( '(sym, t) ': rest ) = (Elem t (Snds (Concat (Snds db))), ContainsSchemaTypes db rest)
