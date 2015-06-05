@@ -25,19 +25,26 @@ module Data.Relational.Select (
   , selectProjection
   , selectCondition
 
+  , selectNone
+  , selectAll
+
   ) where
 
-import GHC.TypeLits (Symbol)
+import GHC.TypeLits (Symbol, KnownSymbol)
+import Data.Proxy
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Project
 import Data.Relational.Condition
+import Data.Relational.Schema
 
 -- | A selection from the database.
 data Select table selected (conditioned :: [[(Symbol, *)]]) where
   Select
     :: ( IsSubset selected schema
        , IsSubset (Concat conditioned) schema
+       , TypeList (Snds selected)
+       , TypeList (Snds (Concat conditioned))
        )
     => Table '(tableName, schema)
     -> Project selected
@@ -52,3 +59,20 @@ selectProjection (Select _ p _) = p
 
 selectCondition :: Select '(tableName, schema) selected conditioned -> Condition conditioned
 selectCondition (Select _ _ c) = c
+
+selectNone
+  :: ( KnownSymbol tableName
+     , IsSchema schema
+     )
+  => Select '(tableName, schema) '[] '[ '[] ]
+selectNone = Select (table (schema Proxy)) EndProject (false .&&. true)
+
+selectAll
+  :: ( KnownSymbol tableName
+     , IsSchema schema
+     , IsProjection schema
+     , IsSubset schema schema
+     , TypeList (Snds schema)
+     )
+  => Select '(tableName, schema) schema '[]
+selectAll = Select (table (schema Proxy)) (projection Proxy) true
