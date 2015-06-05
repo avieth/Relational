@@ -25,6 +25,7 @@ module Data.Relational.Contains (
   , containsConstraint
   , fmapContainsProof
   , tailContainsProof
+  , typeListContainsProof
 
   , ContainsProof(..)
 
@@ -55,6 +56,12 @@ class Contains (xs :: [k]) (ys :: [k]) where
       -> Proxy ys
       -> ContainsProof xs (Tail ys)
 
+    typeListContainsProof
+      :: (TypeList xs)
+      => Proxy xs
+      -> Proxy ys
+      -> TypeListProof ys
+
     {-
     TODO
     elemTransitive
@@ -76,6 +83,7 @@ instance Contains xs '[] where
     containsConstraint _ _ _ = EveryConstraint
     tailContainsProof _ _ = ContainsProof
     fmapContainsProof _ _ _ = ContainsProof
+    typeListContainsProof _ _ = TypeListProof
     {-
     elemTransitive = error "Impossible case; Elem x '[] is never true."
     containsTransitive _ _ _ = ContainsProof
@@ -107,6 +115,12 @@ instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
         proxyYS = Proxy
 
     tailContainsProof proxyXS proxyYS = ContainsProof
+
+    typeListContainsProof proxyXS proxyXYS = case typeListContainsProof proxyXS proxyYS of
+        TypeListProof -> TypeListProof
+      where
+        proxyYS :: Proxy ys
+        proxyYS = Proxy
 
     {-
     elemTransitive proxyXS proxyXYS proxyX = ElemProof
