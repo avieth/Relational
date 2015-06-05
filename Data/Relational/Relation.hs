@@ -19,12 +19,15 @@ module Data.Relational.Relation (
 
     Relation(..)
 
+  , relationParameterIsProjection
+
   ) where
 
 import GHC.TypeLits (Symbol)
 import Data.Relational.Types
 import Data.Relational.Contains
 import Data.Relational.Select
+import Data.Relational.Project
 
 data Relation (db :: [(Symbol, [(Symbol, *)])]) (schema :: [(Symbol, *)]) where
 
@@ -39,12 +42,23 @@ data Relation (db :: [(Symbol, [(Symbol, *)])]) (schema :: [(Symbol, *)]) where
 
     Intersection
       :: ()
-      => Relation db schema
-      -> Relation db schema
-      -> Relation db schema
+      => Relation db projection
+      -> Relation db projection
+      -> Relation db projection
 
     Union
       :: ()
-      => Relation db schema
-      -> Relation db schema
-      -> Relation db schema
+      => Relation db projection
+      -> Relation db projection
+      -> Relation db projection
+
+relationParameterIsProjection
+  :: Relation db projection
+  -> HasConstraint IsProjection projection
+relationParameterIsProjection term = case term of
+    Selection select -> case projectIsProjection (selectProjection select) of
+        HasConstraint -> HasConstraint
+    Intersection left _ -> case relationParameterIsProjection term of
+        HasConstraint -> HasConstraint
+    Union left _ -> case relationParameterIsProjection term of
+        HasConstraint -> HasConstraint
