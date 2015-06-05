@@ -16,6 +16,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
 
 module Data.Relational.Schema (
@@ -24,9 +25,13 @@ module Data.Relational.Schema (
   , pattern EndSchema
   , pattern (:|)
 
+  , IsSchema
+  , schema
+
   ) where
 
 import GHC.TypeLits
+import Data.Proxy
 import Data.Relational.Types
 import Data.Relational.Column
 
@@ -60,3 +65,16 @@ pattern EndSchema = EmptySchema
 infixr 9 :|
 pattern col :| rest = ConsSchema col rest
 
+class IsSchema (schema :: [(Symbol, *)]) where
+    schema :: Proxy schema -> Schema schema
+
+instance IsSchema '[] where
+    schema _ = EndSchema
+
+instance
+    ( NewElement sym (Fsts schema) ~ 'True
+    , KnownSymbol sym
+    , IsSchema schema
+    ) => IsSchema ( '(sym, ty) ': schema)
+  where
+    schema _ = column :| schema Proxy
