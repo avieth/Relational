@@ -18,6 +18,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Data.Relational.Project (
 
@@ -25,6 +26,9 @@ module Data.Relational.Project (
   , pattern EndProject
   , pattern (:+|)
   , fullProjection
+
+  , IsProjection
+  , projection
 
   , RemoveProjectColumn(..)
 
@@ -58,6 +62,15 @@ fullProjection :: Schema schema -> Project schema
 fullProjection sch = case sch of
     EmptySchema -> EmptyProject
     ConsSchema col rest -> ConsProject col (fullProjection rest)
+
+class IsProjection (projection :: [(Symbol, *)]) where
+    projection :: Proxy projection -> Project projection
+
+instance IsProjection '[] where
+    projection _ = EndProject
+
+instance (KnownSymbol sym, IsProjection ps) => IsProjection ( '(sym, ty) ': ps) where
+    projection _ = column :+| (projection (Proxy :: Proxy ps))
 
 -- | This class and its instances allow us to remove a column from a Project
 --   just by giving a proxy for the column's type.
