@@ -30,6 +30,9 @@ module Data.Relational.Project (
   , IsProjection
   , projection
 
+  , projectIsTypeList
+  , projectIsProjection
+
   , RemoveProjectColumn(..)
 
   ) where
@@ -63,6 +66,12 @@ fullProjection sch = case sch of
     EmptySchema -> EmptyProject
     ConsSchema col rest -> ConsProject col (fullProjection rest)
 
+projectIsTypeList :: Project ts -> HasConstraint TypeList ts
+projectIsTypeList prj = case prj of
+    EndProject -> HasConstraint
+    x :+| rest -> case projectIsTypeList rest of
+                      HasConstraint -> HasConstraint
+
 class IsProjection (projection :: [(Symbol, *)]) where
     projection :: Proxy projection -> Project projection
 
@@ -71,6 +80,12 @@ instance IsProjection '[] where
 
 instance (KnownSymbol sym, IsProjection ps) => IsProjection ( '(sym, ty) ': ps) where
     projection _ = column :+| (projection (Proxy :: Proxy ps))
+
+projectIsProjection :: Project ts -> HasConstraint IsProjection ts
+projectIsProjection prj = case prj of
+    EndProject -> HasConstraint
+    (Column _ _) :+| rest -> case projectIsProjection rest of
+                                 HasConstraint -> HasConstraint
 
 -- | This class and its instances allow us to remove a column from a Project
 --   just by giving a proxy for the column's type.
