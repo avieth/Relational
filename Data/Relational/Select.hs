@@ -63,16 +63,19 @@ selectCondition (Select _ _ c) = c
 selectNone
   :: ( KnownSymbol tableName
      , IsSchema schema
+     , IsProjection projection
+     , IsSubset projection schema
+     , TypeList (Snds projection)
      )
-  => Select '(tableName, schema) '[] '[ '[] ]
-selectNone = Select (table (schema Proxy)) EndProject (false .&&. true)
+  => Select '(tableName, schema) projection '[ '[] ]
+selectNone = Select (table (schema Proxy)) (projection Proxy) (false .&&. true)
 
 selectAll
   :: ( KnownSymbol tableName
      , IsSchema schema
-     , IsProjection schema
-     , IsSubset schema schema
-     , TypeList (Snds schema)
+     , IsProjection projection
+     , IsSubset projection schema
+     , TypeList (Snds projection)
      )
-  => Select '(tableName, schema) schema '[]
+  => Select '(tableName, schema) projection '[]
 selectAll = Select (table (schema Proxy)) (projection Proxy) true
