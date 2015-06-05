@@ -295,7 +295,7 @@ instance (Every Show types) => Show (HList types) where
       x :> rest -> concat [show x, " :> ", show rest]
 
 -- TODO TypeList deserves its own module.
-class TypeList (lst :: [*]) where
+class TypeList (lst :: [k]) where
 
   typeListBuild
     :: Every c lst
@@ -308,10 +308,11 @@ class TypeList (lst :: [*]) where
   typeListMap
     :: Every c lst
     => Proxy f
+    -> Proxy g
     -> Proxy c
-    -> (forall t . c t => t -> f t)
-    -> (forall t ts . t -> a ts -> a (t ': ts))
-    -> (forall t ts . a (t ': ts) -> (t, a ts))
+    -> (forall t . c t => g t -> g (f t))
+    -> (forall t ts . g (f t) -> a ts -> a ((f t) ': ts))
+    -> (forall t ts . a (t ': ts) -> (g t, a ts))
     -> a lst
     -> a '[]
     -> a (Fmap f lst)
@@ -321,9 +322,9 @@ class TypeList (lst :: [*]) where
     => Proxy f
     -> Proxy g
     -> Proxy c
-    -> (forall t . c t => f t -> g t)
+    -> (forall t . c t => g (f t) -> g t)
     -> (forall t ts . g t -> b ts -> b (t ': ts))
-    -> (forall t ts . a (t ': ts) -> (t, a ts))
+    -> (forall t ts . Proxy ts -> a ((f t) ': (Fmap f ts)) -> (g (f t), a (Fmap f ts)))
     -> a (Fmap f lst)
     -> b '[]
     -> b lst
@@ -337,7 +338,7 @@ class TypeList (lst :: [*]) where
 
 instance TypeList '[] where
   typeListBuild _ _ _ b = b
-  typeListMap _ _ f builder splitter xs b = b
+  typeListMap _ _ _ f builder splitter xs b = b
   typeListUnmap _ _ _ f builder splitter xs b = b
   typeListFmapProof _ _ = TypeListProof
 
@@ -351,12 +352,12 @@ instance TypeList ts => TypeList (t ': ts) where
       proxyTail :: Proxy ts
       proxyTail = Proxy
 
-  typeListMap proxyF proxyC f builder splitter xs b =
+  typeListMap proxyF proxyG proxyC f builder splitter xs b =
       let (head, tail) = splitter xs
-      in  builder (f head) (typeListMap proxyF proxyC f builder splitter tail b)
+      in  builder (f head) (typeListMap proxyF proxyG proxyC f builder splitter tail b)
 
   typeListUnmap proxyF proxyG proxyC f builder splitter xs b =
-      let (head, tail) = splitter xs
+      let (head, tail) = splitter (Proxy :: Proxy ts) xs
       in  builder (f head) (typeListUnmap proxyF proxyG proxyC f builder splitter tail b)
 
   typeListFmapProof proxyF proxyLst = case typeListFmapProof proxyF proxyTail of
@@ -365,7 +366,7 @@ instance TypeList ts => TypeList (t ': ts) where
       proxyTail :: Proxy ts
       proxyTail = Proxy
 
-data TypeListProof (ts :: [*]) where
+data TypeListProof (ts :: [k]) where
   TypeListProof :: TypeList ts => TypeListProof ts
 
 -- Recurse on the first list, at each element recursing through the second
