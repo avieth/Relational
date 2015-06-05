@@ -12,6 +12,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Data.Relational.Insert (
 
@@ -27,7 +28,7 @@ import Data.Relational.Row
 
 data Insert table where
   Insert
-    :: ()
+    :: (TypeList (Snds schema))
     => Table '(sym, schema)
     -> Row schema
     -> Insert '(sym, schema)
