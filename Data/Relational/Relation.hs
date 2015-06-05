@@ -58,7 +58,7 @@ relationParameterIsProjection
 relationParameterIsProjection term = case term of
     Selection select -> case projectIsProjection (selectProjection select) of
         HasConstraint -> HasConstraint
-    Intersection left _ -> case relationParameterIsProjection term of
+    Intersection left _ -> case relationParameterIsProjection left of
         HasConstraint -> HasConstraint
-    Union left _ -> case relationParameterIsProjection term of
+    Union left _ -> case relationParameterIsProjection left of
         HasConstraint -> HasConstraint
