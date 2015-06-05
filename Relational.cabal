@@ -35,6 +35,7 @@ library
                      , Data.Relational.Insert
                      , Data.Relational.Delete
                      , Data.Relational.Update
+                     , Data.Relational.Relation
 
   -- other-modules:       
   other-extensions:    AutoDeriveTypeable
