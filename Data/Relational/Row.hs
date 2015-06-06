@@ -29,10 +29,13 @@ module Data.Relational.Row (
 
   , RowToHList
   , rowToHList
+  , rowToHListProof
 
+  {-
   , RestoreRowField(..)
   , SwapRowFields(..)
   , MergeRowFields(..)
+  -}
 
   ) where
 
@@ -43,9 +46,10 @@ import Data.Relational.Field
 import Data.Relational.Schema
 import Unsafe.Coerce
 
+-- | A Row in a table.
 data Row :: [(Symbol, *)] -> * where
   EmptyRow :: Row '[]
-  ConsRow :: Field t -> Row ts -> Row (t ': ts)
+  ConsRow :: Field '(sym, t) -> Row ts -> Row ( '(sym, t) ': ts)
 
 instance (Show (Row ts), Show (Field t)) => Show (Row (t ': ts)) where
   show r = case r of
@@ -69,7 +73,16 @@ instance RowToHList '[] where
 instance RowToHList ts => RowToHList ( '(sym, t) ': ts ) where
   rowToHList (field :&| rest) = (fieldValue field) :> (rowToHList rest)
 
+-- | Proof that, for any row, you can get a RowToHList instance. No need to
+--   pass the instance around.
+rowToHListProof :: Row ts -> HasConstraint RowToHList ts
+rowToHListProof row = case row of
+    EndRow -> HasConstraint
+    (r :: Field '(sym, t)) :&| (rest :: Row ts) ->
+        case rowToHListProof rest :: HasConstraint RowToHList ts of
+            HasConstraint -> HasConstraint
 
+{-
 class RestoreRowField (t :: (Symbol, *)) (ts :: [(Symbol, *)]) (ss :: [(Symbol, *)]) where
     restoreRowField :: Proxy ss -> Field t -> Row ts -> Row (Restore t ts ss)
 
@@ -145,3 +158,4 @@ instance MergeRowFields s t u ts => MergeRowFields s t u (r ': ts) where
     -- the more specific one for s t u (s ': t ': ts) was not used, and
     -- therefore Merge will pass over t1. unsafeCoerce should be safe.
     mergeRowFields f (arr :&| rest) = unsafeCoerce (arr :&| (mergeRowFields f rest))
+-}

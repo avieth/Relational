@@ -61,7 +61,7 @@ infixr 1 :@
 pattern table :@ db = ConsDatabase table db
 
 -- | Add a table to a database. If the exact table is already present (same
---   name and schema) then there's no change, but this does allow for
+--   name and schema) then there's no change, but this *does* allow for
 --   duplicate table names with different schemas. Those can be caught
 --   by adding a Unique (TableNames db) constraint.
 type family AddTable (tbl :: (Symbol, [(Symbol, *)])) (db :: [(Symbol, [(Symbol, *)])]) where
@@ -76,19 +76,24 @@ type family AddTables (tbls :: [(Symbol, [(Symbol, *)])]) (db :: [(Symbol, [(Sym
     AddTables '[] db = db
     AddTables (t ': ts) db = AddTable t (AddTables ts db)
 
+-- | The names of every table in a database.
 type family TableNames (db :: [(Symbol, [(Symbol, *)])]) :: [Symbol] where
     TableNames '[] = '[]
     TableNames ('(tableName, schema) ': rest) = tableName ': (TableNames rest)
 
+-- | The union of two or more databases. Duplicates may arise!
 type DatabaseUnion (dbs :: [[(Symbol, [(Symbol, *)])]]) = Concat dbs
 
+-- | A constraint indicating that a database contains another.
 type family ContainsDatabase (dbContainer :: [(Symbol, [(Symbol, *)])]) (dbContained :: [(Symbol, [(Symbol, *)])]) :: Constraint where
     ContainsDatabase db '[] = ()
     ContainsDatabase db (table ': rest) = (ContainsTable db table, ContainsDatabase db rest)
 
+-- | A constraint indicating that one database contains a given table.
 type family ContainsTable (dbContainer :: [(Symbol, [(Symbol, *)])]) (table :: (Symbol, [(Symbol, *)])) :: Constraint where
     ContainsTable db '(tableName, schema) = (Elem '(tableName, schema) db, ContainsSchemaTypes db schema)
 
+-- | A constraint indicating that one database contains all the types of a schema.
 type family ContainsSchemaTypes (dbContainer :: [(Symbol, [(Symbol, *)])]) (schema :: [(Symbol, *)]) :: Constraint where
     ContainsSchemaTypes db '[] = ()
     ContainsSchemaTypes db ( '(sym, t) ': rest ) = (Elem t (Snds (Concat (Snds db))), ContainsSchemaTypes db rest)

@@ -29,6 +29,8 @@ import Data.Relational.Contains
 import Data.Relational.Select
 import Data.Relational.Project
 
+-- | Description of a Relation inside some @db@, built up from selections via
+--   intersection and union. TODO joins.
 data Relation (db :: [(Symbol, [(Symbol, *)])]) (schema :: [(Symbol, *)]) where
 
     Selection
@@ -52,6 +54,7 @@ data Relation (db :: [(Symbol, [(Symbol, *)])]) (schema :: [(Symbol, *)]) where
       -> Relation db projection
       -> Relation db projection
 
+-- | Proof that for any Relation db ts, IsProjection ts.
 relationParameterIsProjection
   :: Relation db projection
   -> HasConstraint IsProjection projection

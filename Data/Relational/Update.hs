@@ -31,6 +31,7 @@ import Data.Relational.Project
 import Data.Relational.Condition
 import Data.Relational.Row
 
+-- | An Update of some table.
 data Update table projected conditioned where
   Update
     :: ( IsSubset (Concat conditioned) schema
@@ -48,17 +49,22 @@ data Update table projected conditioned where
     --   by the projection.
     -> Update '(sym, schema) projected conditioned
 
+-- | The Table for which an Update is relevant.
 updateTable :: Update '(sym, schema) projected conditioned -> Table '(sym, schema)
 updateTable (Update t _ _ _) = t
 
+-- | The Project held in the Update, which indicates which Columns will be
+--   affected.
 updateProject :: Update '(sym, schema) projected conditioned -> Project projected
 updateProject (Update _ p _ _) = p
 
+-- | The values to be set.
 updateColumns
   :: Update '(sym, schema) projected conditioned
   -> Row projected
 updateColumns (Update _ _ _ r) = r
 
+-- | The Condition which controls which rows are to be updated.
 updateCondition
   :: Update '(sym, schema) projected conditioned
   -> Condition conditioned

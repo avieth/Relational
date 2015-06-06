@@ -33,7 +33,7 @@ module Data.Relational.Project (
   , projectIsTypeList
   , projectIsProjection
 
-  , RemoveProjectColumn(..)
+  --, RemoveProjectColumn(..)
 
   ) where
 
@@ -66,12 +66,24 @@ fullProjection sch = case sch of
     EmptySchema -> EmptyProject
     ConsSchema col rest -> ConsProject col (fullProjection rest)
 
+-- | Proof that for any Project ts, ts is a TypeList.
 projectIsTypeList :: Project ts -> HasConstraint TypeList ts
 projectIsTypeList prj = case prj of
     EndProject -> HasConstraint
     x :+| rest -> case projectIsTypeList rest of
                       HasConstraint -> HasConstraint
 
+-- | Proof that for any Project ts, IsProjection ts.
+--   That's useful, so that you don't have to carry around IsProjection
+--   constraints, you can just pull one from a Project term.
+projectIsProjection :: Project ts -> HasConstraint IsProjection ts
+projectIsProjection prj = case prj of
+    EndProject -> HasConstraint
+    (Column _ _) :+| rest -> case projectIsProjection rest of
+                                 HasConstraint -> HasConstraint
+
+-- | We use this typeclass to provide automatic projection generation based
+--   on its type.
 class IsProjection (projection :: [(Symbol, *)]) where
     projection :: Proxy projection -> Project projection
 
@@ -81,12 +93,7 @@ instance IsProjection '[] where
 instance (KnownSymbol sym, IsProjection ps) => IsProjection ( '(sym, ty) ': ps) where
     projection _ = column :+| (projection (Proxy :: Proxy ps))
 
-projectIsProjection :: Project ts -> HasConstraint IsProjection ts
-projectIsProjection prj = case prj of
-    EndProject -> HasConstraint
-    (Column _ _) :+| rest -> case projectIsProjection rest of
-                                 HasConstraint -> HasConstraint
-
+{-
 -- | This class and its instances allow us to remove a column from a Project
 --   just by giving a proxy for the column's type.
 --
@@ -118,3 +125,4 @@ instance RemoveProjectColumn t ts => RemoveProjectColumn t (s ': ts) where
     removeProjectColumn proxyT (col :+| rest) = unsafeCoerce (col :+| (removeProjectColumn proxyT rest))
 
 -- TBD will it be useful to add a swapping mechanism like we have for Rows?
+-}

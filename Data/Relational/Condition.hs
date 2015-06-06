@@ -30,11 +30,6 @@ module Data.Relational.Condition (
   , ConditionDisjunction(..)
   , ConditionTerminal(..)
 
-  , conditionValues
-
-  , AppendCondition
-  , appendCondition
-
   , (.==.)
   , (.<.)
   , (.>.)
@@ -43,8 +38,13 @@ module Data.Relational.Condition (
   , true
   , false
 
-  , RemoveTerminalConditions(..)
-  , DropEmptyDisjuncts(..)
+  , conditionValues
+
+  --, AppendCondition
+  --, appendCondition
+
+  --, RemoveTerminalConditions(..)
+  --, DropEmptyDisjuncts(..)
 
   ) where
 
@@ -56,16 +56,20 @@ import Data.Relational.Field
 import Data.Relational.Row
 import Unsafe.Coerce
 
+-- | A Condition is a conjunction of disjunctions.
 type Condition = ConditionConjunction
 
+-- | A conjunction of disjunctions.
 data ConditionConjunction :: [[(Symbol, *)]] -> * where
   AndCondition :: ConditionDisjunction ts -> ConditionConjunction tss -> ConditionConjunction (ts ': tss)
   AlwaysTrue :: ConditionConjunction '[]
 
+-- | A disjunction of terminals.
 data ConditionDisjunction :: [(Symbol, *)] -> * where
   OrCondition :: ConditionTerminal t -> ConditionDisjunction ts -> ConditionDisjunction (t ': ts)
   AlwaysFalse :: ConditionDisjunction '[]
 
+-- | Terminal conditions.
 data ConditionTerminal :: (Symbol, *) -> * where
   EqCondition :: Field '(sym, t) -> ConditionTerminal '(sym, t)
   LtCondition :: Field '(sym, t) -> ConditionTerminal '(sym, t)
@@ -75,23 +79,60 @@ instance Show (ConditionConjunction '[]) where
   show c = case c of
       AlwaysTrue -> "True"
 
-instance (Show (ConditionDisjunction ts), Show (ConditionConjunction tss)) => Show (ConditionConjunction (ts ': tss)) where
-  show c = case c of
-      AndCondition disjunction conjunction -> concat ["( ", show disjunction, " ) ^ ", show conjunction]
+instance
+    ( Show (ConditionDisjunction ts)
+    , Show (ConditionConjunction tss)
+    ) => Show (ConditionConjunction (ts ': tss))
+  where
+    show c = case c of
+        AndCondition disjunction conjunction ->
+            concat ["( ", show disjunction, " ) ^ ", show conjunction]
 
 instance Show (ConditionDisjunction '[]) where
   show d = case d of
       AlwaysFalse -> "False"
 
-instance (Show (Snd t), Show (ConditionDisjunction ts)) => Show (ConditionDisjunction (t ': ts)) where
-  show d = case d of
-      OrCondition terminal disjunction -> concat [show terminal, " v ", show disjunction]
+instance
+    ( Show (Snd t)
+    , Show (ConditionDisjunction ts)
+    ) => Show (ConditionDisjunction (t ': ts))
+  where
+    show d = case d of
+        OrCondition terminal disjunction ->
+            concat [show terminal, " v ", show disjunction]
 
 instance (Show (Snd t)) => Show (ConditionTerminal t) where
   show t = case t of
-      EqCondition field -> concat [columnName (fieldColumn field), " = ", show (fieldValue field)]
-      LtCondition field -> concat [columnName (fieldColumn field), " < ", show (fieldValue field)]
-      GtCondition field -> concat [columnName (fieldColumn field), " > ", show (fieldValue field)]
+      EqCondition field ->
+          concat [columnName (fieldColumn field), " = ", show (fieldValue field)]
+      LtCondition field ->
+          concat [columnName (fieldColumn field), " < ", show (fieldValue field)]
+      GtCondition field ->
+          concat [columnName (fieldColumn field), " > ", show (fieldValue field)]
+
+infixr 7 .&&.
+infixr 8 .||.
+infixr 9 .==.
+infixr 9 .<.
+infixr 9 .>.
+
+(.==.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
+(.==.) (Column proxy _) x = EqCondition (Field proxy x)
+
+(.<.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
+(.<.) (Column proxy _) x = LtCondition (Field proxy x)
+
+(.>.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
+(.>.) (Column proxy _) x = GtCondition (Field proxy x)
+
+(.&&.) :: ConditionDisjunction cs -> ConditionConjunction cs' -> Condition (cs ': cs')
+(.&&.) = AndCondition
+
+(.||.) :: ConditionTerminal c -> ConditionDisjunction cs -> ConditionDisjunction (c ': cs)
+(.||.) = OrCondition
+
+true = AlwaysTrue
+false = AlwaysFalse
 
 -- | Extract the values used in a Condition, i.e. the reference values for
 --   equality and ordering.
@@ -117,6 +158,7 @@ conditionValueTerminal terminal = case terminal of
     LtCondition field -> fieldValue field :> HNil
     GtCondition field -> fieldValue field :> HNil
 
+{-
 class AppendCondition t xs ys where
   appendCondition :: t xs -> t ys -> t (Append xs ys)
 
@@ -137,30 +179,6 @@ instance AppendCondition ConditionConjunction xs ys => AppendCondition Condition
   -- Must unsafeCoerce past this obvious fact.
   appendCondition (AndCondition left right) right' = unsafeCoerce $
       AndCondition left (appendCondition right right')
-
-infixr 7 .&&.
-infixr 8 .||.
-infixr 9 .==.
-infixr 9 .<.
-infixr 9 .>.
-
-(.==.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
-(.==.) (Column proxy _) x = EqCondition (Field proxy x)
-
-(.<.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
-(.<.) (Column proxy _) x = LtCondition (Field proxy x)
-
-(.>.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
-(.>.) (Column proxy _) x = GtCondition (Field proxy x)
-
-(.&&.) :: ConditionDisjunction cs -> ConditionConjunction cs' -> Condition (cs ': cs')
-(.&&.) = AndCondition
-
-(.||.) :: ConditionTerminal c -> ConditionDisjunction cs -> ConditionDisjunction (c ': cs)
-(.||.) = OrCondition
-
-true = AlwaysTrue
-false = AlwaysFalse
 
 -- Now, to juggle Conditions like we do Projects and Rows.
 -- We have a list of the form [[(Symbol, *)]]. What can we do with it?
@@ -214,3 +232,4 @@ instance RemoveTerminalConditions' t ts => RemoveTerminalConditions' t (s ': ts)
     -- Thus we unsafeCoerce
     removeTerminalConditions' proxy (OrCondition terminal rest) =
         unsafeCoerce (OrCondition terminal (removeTerminalConditions' proxy rest))
+-}

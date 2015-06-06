@@ -26,6 +26,7 @@ import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Row
 
+-- | An insertion into @table@.
 data Insert table where
   Insert
     :: (TypeList (Snds schema))
@@ -33,8 +34,10 @@ data Insert table where
     -> Row schema
     -> Insert '(sym, schema)
 
+-- | The Table for which the Insert is relevant.
 insertTable :: Insert '(sym, schema) -> Table '(sym, schema)
 insertTable (Insert t _) = t
 
+-- | The Row to be inserted.
 insertRow :: Insert '(sym, schema) -> Row schema
 insertRow (Insert _ r) = r

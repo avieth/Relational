@@ -38,6 +38,9 @@ import Data.Relational.Types
 --   not necessarily bigger than @ys@.
 class Contains (xs :: [k]) (ys :: [k]) where
 
+    -- | Transfer an Every c xs to an Every c ys. This is intuitively
+    --   obvious: if c holds for all xs, and all ys are in xs, then c holds
+    --   for all ys.
     containsConstraint
       :: (Every c xs)
       => Proxy c
@@ -45,17 +48,20 @@ class Contains (xs :: [k]) (ys :: [k]) where
       -> Proxy ys
       -> EveryConstraint c ys
 
+    -- | Transfer a Contains through an Fmap.
     fmapContainsProof
       :: Proxy f
       -> Proxy xs
       -> Proxy ys
       -> ContainsProof (Fmap f xs) (Fmap f ys)
 
+    -- | Transfer a Contains to the tail of a type list.
     tailContainsProof
       :: Proxy xs
       -> Proxy ys
       -> ContainsProof xs (Tail ys)
 
+    -- | Transfer a TypeList constraint through a Contains.
     typeListContainsProof
       :: (TypeList xs)
       => Proxy xs
@@ -136,5 +142,6 @@ instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
         proxyX = Proxy
     -}
 
+-- | Proof of @Contains xs ys@, held in a GADT so we can pass the proof around.
 data ContainsProof (xs :: [k]) (ys :: [k]) where
   ContainsProof :: Contains xs ys => ContainsProof xs ys

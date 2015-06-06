@@ -41,9 +41,10 @@ instance Show (Column ts) where
   show col = case col of
       Column proxy _ -> symbolVal proxy
 
+-- | Create a column according to a type signature.
 column :: KnownSymbol sym => Column '(sym, t)
 column = Column Proxy Proxy
 
--- | The name of a column; used to identify that column in queries.
+-- | The name of a column.
 columnName :: Column '(sym, t) -> String
 columnName (Column symbol _) = symbolVal symbol

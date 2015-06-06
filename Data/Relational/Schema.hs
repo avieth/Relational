@@ -26,6 +26,7 @@ module Data.Relational.Schema (
   , pattern (:|)
 
   , IsSchema
+  , schemaIsSchema
   , schema
 
   ) where
@@ -65,6 +66,8 @@ pattern EndSchema = EmptySchema
 infixr 9 :|
 pattern col :| rest = ConsSchema col rest
 
+-- | This typelcass is here only to allow automatic generation of schema
+--   terms according to their types.
 class IsSchema (schema :: [(Symbol, *)]) where
     schema :: Proxy schema -> Schema schema
 
@@ -78,3 +81,10 @@ instance
     ) => IsSchema ( '(sym, ty) ': schema)
   where
     schema _ = column :| schema Proxy
+
+-- | Proof that for any Schema ts, IsSchema ts.
+schemaIsSchema :: Schema ts -> HasConstraint IsSchema ts
+schemaIsSchema schema = case schema of
+    EndSchema -> HasConstraint
+    (Column _ _) :| rest -> case schemaIsSchema rest of
+                                HasConstraint -> HasConstraint

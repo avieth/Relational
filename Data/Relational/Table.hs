@@ -33,6 +33,7 @@ import Data.Relational.Schema
 data Table :: (Symbol, [(Symbol, *)]) -> * where
   Table :: KnownSymbol sym => Proxy sym -> Schema xs -> Table '(sym, xs)
 
+-- | Make a Table according to its type.
 table :: KnownSymbol sym => Schema xs -> Table '(sym, xs)
 table schema = Table Proxy schema
 
@@ -40,5 +41,6 @@ table schema = Table Proxy schema
 tableName :: Table '(sym, t) -> String
 tableName (Table symbol _) = symbolVal symbol
 
+-- | The Schema of a Table.
 tableSchema :: Table '(sym, xs) -> Schema xs
 tableSchema (Table _ sch) = sch

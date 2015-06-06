@@ -51,15 +51,19 @@ data Select table selected (conditioned :: [[(Symbol, *)]]) where
     -> Condition conditioned
     -> Select '(tableName, schema) selected conditioned
 
+-- | The table for which this Select is relevant.
 selectTable :: Select '(tableName, schema) selected conditioned -> Table '(tableName, schema)
 selectTable (Select t _ _) = t
 
+-- | The Project inside this Select.
 selectProjection :: Select '(tableName, schema) selected conditioned -> Project selected
 selectProjection (Select _ p _) = p
 
+-- | The Condition inside this Select.
 selectCondition :: Select '(tableName, schema) selected conditioned -> Condition conditioned
 selectCondition (Select _ _ c) = c
 
+-- | A Select which selects no rows.
 selectNone
   :: ( KnownSymbol tableName
      , IsSchema schema
@@ -70,6 +74,7 @@ selectNone
   => Select '(tableName, schema) projection '[ '[] ]
 selectNone = Select (table (schema Proxy)) (projection Proxy) (false .&&. true)
 
+-- | A Select which selects all rows.
 selectAll
   :: ( KnownSymbol tableName
      , IsSchema schema
