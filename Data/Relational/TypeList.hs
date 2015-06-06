@@ -24,6 +24,7 @@ module Data.Relational.TypeList (
   , typeListBuild
   , typeListMap
   , typeListUnmap
+  , typeListFmapProof
 
   ) where
 
