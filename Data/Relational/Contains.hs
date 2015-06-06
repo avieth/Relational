@@ -109,7 +109,7 @@ instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
         proxyX = Proxy
 
     fmapContainsProof proxyF proxyXS proxyXYS = case (elem) of
-        ElemProof -> case (there) of
+        HasConstraint -> case (there) of
             ContainsProof -> ContainsProof
       where
         elem = fmapElemProof proxyF proxyX proxyXS

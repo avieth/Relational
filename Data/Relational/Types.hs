@@ -44,7 +44,7 @@ module Data.Relational.Types (
   , Swap
   , Merge
   , Elem
-  , ElemProof(..)
+  , ElemProof
   , elemConstraint
   , elemHasConstraint
   , fmapElemProof
@@ -158,7 +158,7 @@ class Elem (x :: k) (xs :: [k]) where
 instance Elem x (x ': xs) where
   elemConstraint _ _ _ f = f
   elemHasConstraint _ _ _ = HasConstraint
-  fmapElemProof _ _ _ = ElemProof
+  fmapElemProof _ _ _ = HasConstraint
 
 instance Elem x xs => Elem x (y ': xs) where
   elemConstraint proxyC proxyX _ f = elemConstraint proxyC proxyX proxyXS f
@@ -172,13 +172,12 @@ instance Elem x xs => Elem x (y ': xs) where
       proxyXS = Proxy
 
   fmapElemProof proxyF proxyX proxyYXS = case fmapElemProof proxyF proxyX proxyXS of
-      ElemProof -> ElemProof
+      HasConstraint -> HasConstraint
     where
       proxyXS :: Proxy xs
       proxyXS = Proxy
 
-data ElemProof (x :: k) (xs :: [k]) where
-  ElemProof :: Elem x xs => ElemProof x xs
+type ElemProof x xs = HasConstraint (Elem x) xs
 
 type family IsSubset (xs :: [k]) (ys :: [k]) :: Constraint where
   IsSubset '[] ys = ()
