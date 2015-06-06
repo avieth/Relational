@@ -33,6 +33,7 @@ module Data.Relational.Select (
 
 import GHC.TypeLits (Symbol, KnownSymbol)
 import Data.Proxy
+import Data.Coerce (Coercible)
 import Data.Relational.TypeList
 import Data.Relational.Types
 import Data.Relational.Table
@@ -52,10 +53,9 @@ data Select table selected projected (conditioned :: [[(Symbol, *)]]) where
        , TypeList (Snds selected)
        , TypeList (Snds projected)
        , TypeList (Snds (Concat conditioned))
-       , (Snds selected) ~ (Snds projected)
-       -- Equality is too strong; it's enough to demand, for each
-       -- corresponding pair of types, an injection from selected to
-       -- projected. This requires more work, so I'll leave it for now.
+       , Coercible (Snds selected) (Snds projected)
+       -- We use Coercible to ensure that the types in selected and projected,
+       -- though possibly different, have the same representation.
        )
     => Table '(tableName, schema)
     -> Project selected
@@ -73,7 +73,7 @@ select
      , IsSchema schema
      , IsProjection selected
      , IsProjection projected
-     , (Snds selected) ~ (Snds projected)
+     , Coercible (Snds selected) (Snds projected)
      )
   => Condition conditioned
   -> Select '(tableName, schema) selected projected conditioned
