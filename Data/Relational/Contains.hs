@@ -33,6 +33,7 @@ module Data.Relational.Contains (
 
 import Data.Proxy
 import Data.Relational.HasConstraint
+import Data.Relational.TypeList
 import Data.Relational.Types
 
 -- | Every element of @ys@ is in @xs@, ignoring duplicates, so that @xs@ is
@@ -90,7 +91,7 @@ instance Contains xs '[] where
     containsConstraint _ _ _ = EveryConstraint
     tailContainsProof _ _ = ContainsProof
     fmapContainsProof _ _ _ = ContainsProof
-    typeListContainsProof _ _ = TypeListProof
+    typeListContainsProof _ _ = HasConstraint
     {-
     elemTransitive = error "Impossible case; Elem x '[] is never true."
     containsTransitive _ _ _ = ContainsProof
@@ -124,7 +125,7 @@ instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
     tailContainsProof proxyXS proxyYS = ContainsProof
 
     typeListContainsProof proxyXS proxyXYS = case typeListContainsProof proxyXS proxyYS of
-        TypeListProof -> TypeListProof
+        HasConstraint -> HasConstraint
       where
         proxyYS :: Proxy ys
         proxyYS = Proxy

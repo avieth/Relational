@@ -11,6 +11,7 @@ Portability : non-portable (GHC only)
 module Data.Relational (
 
     module Data.Relational.HasConstraint
+  , module Data.Relational.TypeList
   , module Data.Relational.Types
   , module Data.Relational.Contains
   , module Data.Relational.Column
@@ -30,6 +31,7 @@ module Data.Relational (
   ) where
 
 import Data.Relational.HasConstraint
+import Data.Relational.TypeList
 import Data.Relational.Types
 import Data.Relational.Contains
 import Data.Relational.Column

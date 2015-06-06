@@ -67,12 +67,6 @@ module Data.Relational.Types (
   , pattern HNil
   , pattern (:>)
   , appendHList
-  , TypeList
-  , typeListBuild
-  , typeListMap
-  , typeListUnmap
-  , typeListFmapProof
-  , TypeListProof(..)
   , HasDuplicates
   , Unique
 
@@ -289,81 +283,6 @@ instance (Every Show types) => Show (HList types) where
   show lst = case lst of
       HNil -> "HNil"
       x :> rest -> concat [show x, " :> ", show rest]
-
--- TODO TypeList deserves its own module.
-class TypeList (lst :: [k]) where
-
-  typeListBuild
-    :: Every c lst
-    => Proxy lst
-    -> Proxy c
-    -> (forall t ts . c t => Proxy t -> a ts -> a (t ': ts))
-    -> a '[]
-    -> a lst
-
-  typeListMap
-    :: Every c lst
-    => Proxy f
-    -> Proxy g
-    -> Proxy c
-    -> (forall t . c t => g t -> g (f t))
-    -> (forall t ts . g (f t) -> a ts -> a ((f t) ': ts))
-    -> (forall t ts . a (t ': ts) -> (g t, a ts))
-    -> a lst
-    -> a '[]
-    -> a (Fmap f lst)
-
-  typeListUnmap
-    :: Every c lst
-    => Proxy f
-    -> Proxy g
-    -> Proxy c
-    -> (forall t . c t => g (f t) -> g t)
-    -> (forall t ts . g t -> b ts -> b (t ': ts))
-    -> (forall t ts . Proxy ts -> a ((f t) ': (Fmap f ts)) -> (g (f t), a (Fmap f ts)))
-    -> a (Fmap f lst)
-    -> b '[]
-    -> b lst
-
-  -- This is an interesting idea! Offer an "upgrade" through an Fmap.
-  typeListFmapProof
-    :: ()
-    => Proxy f
-    -> Proxy lst
-    -> TypeListProof (Fmap f lst)
-
-instance TypeList '[] where
-  typeListBuild _ _ _ b = b
-  typeListMap _ _ _ f builder splitter xs b = b
-  typeListUnmap _ _ _ f builder splitter xs b = b
-  typeListFmapProof _ _ = TypeListProof
-
-instance TypeList ts => TypeList (t ': ts) where
-
-  typeListBuild proxyLst proxyC builder b =
-      builder proxyHead (typeListBuild proxyTail proxyC builder b)
-    where
-      proxyHead :: Proxy t
-      proxyHead = Proxy
-      proxyTail :: Proxy ts
-      proxyTail = Proxy
-
-  typeListMap proxyF proxyG proxyC f builder splitter xs b =
-      let (head, tail) = splitter xs
-      in  builder (f head) (typeListMap proxyF proxyG proxyC f builder splitter tail b)
-
-  typeListUnmap proxyF proxyG proxyC f builder splitter xs b =
-      let (head, tail) = splitter (Proxy :: Proxy ts) xs
-      in  builder (f head) (typeListUnmap proxyF proxyG proxyC f builder splitter tail b)
-
-  typeListFmapProof proxyF proxyLst = case typeListFmapProof proxyF proxyTail of
-      TypeListProof -> TypeListProof
-    where
-      proxyTail :: Proxy ts
-      proxyTail = Proxy
-
-data TypeListProof (ts :: [k]) where
-  TypeListProof :: TypeList ts => TypeListProof ts
 
 -- Recurse on the first list, at each element recursing through the second
 -- list. The third list is there to replace the second list once it's

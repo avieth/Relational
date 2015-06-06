@@ -32,6 +32,7 @@ module Data.Relational.Select (
 
 import GHC.TypeLits (Symbol, KnownSymbol)
 import Data.Proxy
+import Data.Relational.TypeList
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Project

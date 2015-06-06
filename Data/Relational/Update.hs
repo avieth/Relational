@@ -25,6 +25,7 @@ module Data.Relational.Update (
 
   ) where
 
+import Data.Relational.TypeList
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Project
