@@ -18,7 +18,7 @@ cabal-version:       >=1.10
 
 library
 
-  ghc-options:       -XOverlappingInstances
+  ghc-options:       
 
   exposed-modules:     Data.Relational
                      , Data.Relational.Types
