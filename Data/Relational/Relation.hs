@@ -24,6 +24,7 @@ module Data.Relational.Relation (
   ) where
 
 import GHC.TypeLits (Symbol)
+import Data.Relational.HasConstraint
 import Data.Relational.Types
 import Data.Relational.Contains
 import Data.Relational.Select

@@ -33,6 +33,7 @@ module Data.Relational.Schema (
 
 import GHC.TypeLits
 import Data.Proxy
+import Data.Relational.HasConstraint
 import Data.Relational.Types
 import Data.Relational.Column
 

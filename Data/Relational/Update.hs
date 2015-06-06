@@ -36,8 +36,6 @@ data Update table projected conditioned where
   Update
     :: ( IsSubset (Concat conditioned) schema
        , IsSubsetUnique projected schema
-       -- ^ A Project can have duplicate elements, but since a schema cannot,
-       --   SubsetUnique projected schema implies that projected also cannot.
        , TypeList (Snds projected)
        , TypeList (Snds (Concat conditioned))
        )
@@ -45,8 +43,6 @@ data Update table projected conditioned where
     -> Project projected
     -> Condition conditioned
     -> Row projected
-    -- ^ The data to use in the update, corresponding to the columns isolated
-    --   by the projection.
     -> Update '(sym, schema) projected conditioned
 
 -- | The Table for which an Update is relevant.

@@ -41,6 +41,7 @@ module Data.Relational.Row (
 
 import GHC.TypeLits
 import Data.Proxy
+import Data.Relational.HasConstraint
 import Data.Relational.Types
 import Data.Relational.Field
 import Data.Relational.Schema

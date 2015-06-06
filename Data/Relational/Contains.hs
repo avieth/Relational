@@ -32,6 +32,7 @@ module Data.Relational.Contains (
   ) where
 
 import Data.Proxy
+import Data.Relational.HasConstraint
 import Data.Relational.Types
 
 -- | Every element of @ys@ is in @xs@, ignoring duplicates, so that @xs@ is

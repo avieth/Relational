@@ -43,7 +43,6 @@ module Data.Relational.Types (
   , Tail
   , Swap
   , Merge
-  , HasConstraint(..)
   , Elem
   , ElemProof(..)
   , elemConstraint
@@ -81,6 +80,7 @@ module Data.Relational.Types (
 
 import GHC.Exts (Constraint)
 import Data.Proxy
+import Data.Relational.HasConstraint
 
 type family NewElement (s :: k) (ss :: [k]) :: Bool where
   NewElement s '[] = 'True
@@ -127,9 +127,6 @@ type family Merge (t :: k) (s :: k) (u :: k) (xs :: [k]) :: [k] where
   Merge x y z '[] = '[]
   Merge x y z (x ': y ': xs) = z ': xs
   Merge x y z (w ': xs) = w ': (Merge x y z xs)
-
-data HasConstraint (c :: k -> Constraint) (x :: k) where
-  HasConstraint :: c x => HasConstraint c x
 
 -- TODO use the EveryConstraint GADT like we do in Contains.
 class Elem (x :: k) (xs :: [k]) where
