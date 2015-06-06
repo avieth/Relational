@@ -31,15 +31,17 @@ import Data.Relational
 import Data.Proxy
 import qualified Data.Text as T
 
-type Username = T.Text
-type Email = T.Text
-type Date = ()
-type MessageBody = T.Text
+newtype Username = Username T.Text
+newtype Email = Email T.Text
+newtype Date = Date Integer
+newtype MessageBody = MessageBody T.Text
+newtype Sender = Sender Username
+newtype Receiver = Receiver Username
 
 type UsernameColumn = '("username", Username)
 type EmailColumn = '("email", Email)
-type SenderColumn = '("sender", Username)
-type ReceiverColumn = '("receiver", Username)
+type SenderColumn = '("sender", Sender)
+type ReceiverColumn = '("receiver", Receiver)
 type SendTimeColumn = '("send_time", Date)
 type ViewedColumn = '("viewed", Bool)
 type MessageBodyColumn = '("message_body", MessageBody)
@@ -59,8 +61,8 @@ type MessagesTable = '("messages", MessagesSchema)
 type ExampleDatabase = '[ UsersTable, MessagesTable ]
 
 messageInsertion
-  :: Username
-  -> Username
+  :: Sender
+  -> Receiver
   -> Date
   -> MessageBody
   -> Insert MessagesTable
