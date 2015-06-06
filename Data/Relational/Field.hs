@@ -22,6 +22,7 @@ Portability : non-portable (GHC only)
 module Data.Relational.Field (
 
     Field(..)
+  , field
   , fieldValue
   , fieldColumn
   , fromColumnAndValue
@@ -40,6 +41,10 @@ data Field :: (Symbol, *) -> * where
 instance Show t => Show (Field '(sym, t)) where
   show field = case field of
       Field proxy v -> concat [symbolVal proxy, " : ", show v]
+
+-- | Specify a type signature, and you don't have to give a Column.
+field :: KnownSymbol sym => t -> Field '(sym, t)
+field = fromColumnAndValue column
 
 -- | The value in a Field.
 fieldValue :: Field '(sym, t) -> t

@@ -21,6 +21,7 @@ Portability : non-portable (GHC only)
 module Data.Relational.Select (
 
     Select(..)
+  , select
   , selectTable
   , selectProjection
   , selectCondition
@@ -51,6 +52,19 @@ data Select table selected (conditioned :: [[(Symbol, *)]]) where
     -> Project selected
     -> Condition conditioned
     -> Select '(tableName, schema) selected conditioned
+
+select
+  :: ( IsSubset projected schema
+     , IsSubset (Concat conditioned) schema
+     , TypeList (Snds projected)
+     , TypeList (Snds (Concat conditioned))
+     , KnownSymbol tableName
+     , IsSchema schema
+     , IsProjection projected
+     )
+  => Condition conditioned
+  -> Select '(tableName, schema) projected conditioned
+select condition = Select (table (schema Proxy)) (projection Proxy) condition
 
 -- | The table for which this Select is relevant.
 selectTable :: Select '(tableName, schema) selected conditioned -> Table '(tableName, schema)

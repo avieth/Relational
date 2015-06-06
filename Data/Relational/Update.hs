@@ -18,6 +18,7 @@ Portability : non-portable (GHC only)
 module Data.Relational.Update (
 
     Update(..)
+  , update
   , updateTable
   , updateProject
   , updateColumns
@@ -25,12 +26,15 @@ module Data.Relational.Update (
 
   ) where
 
+import GHC.TypeLits (KnownSymbol)
+import Data.Proxy
 import Data.Relational.TypeList
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Project
 import Data.Relational.Condition
 import Data.Relational.Row
+import Data.Relational.Schema
 
 -- | An Update of some table.
 data Update table projected conditioned where
@@ -45,6 +49,22 @@ data Update table projected conditioned where
     -> Condition conditioned
     -> Row projected
     -> Update '(sym, schema) projected conditioned
+
+-- | Create an Update from a row and condition. You must specify the other
+--   types.
+update
+  :: ( KnownSymbol sym
+     , TypeList (Snds (Concat conditioned))
+     , TypeList (Snds projected)
+     , IsSubset (Concat conditioned) schema
+     , IsSubsetUnique projected schema
+     , IsSchema schema
+     , IsProjection projected
+     )
+  => Row projected
+  -> Condition conditioned
+  -> Update '(sym, schema) projected conditioned
+update row condition = Update (table (schema Proxy)) (projection Proxy) condition row
 
 -- | The Table for which an Update is relevant.
 updateTable :: Update '(sym, schema) projected conditioned -> Table '(sym, schema)

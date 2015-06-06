@@ -17,15 +17,19 @@ Portability : non-portable (GHC only)
 module Data.Relational.Insert (
 
     Insert(..)
+  , insert
   , insertTable
   , insertRow
 
   ) where
 
+import GHC.TypeLits (KnownSymbol)
+import Data.Proxy
 import Data.Relational.TypeList
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Row
+import Data.Relational.Schema
 
 -- | An insertion into @table@.
 data Insert table where
@@ -34,6 +38,17 @@ data Insert table where
     => Table '(sym, schema)
     -> Row schema
     -> Insert '(sym, schema)
+
+-- | For convenience: specify a type signature, and insert does the work for
+--   you.
+insert
+  :: ( IsSchema schema
+     , TypeList (Snds schema)
+     , KnownSymbol sym
+     )
+  => Row schema
+  -> Insert '(sym, schema)
+insert row = Insert (table (schema Proxy)) row
 
 -- | The Table for which the Insert is relevant.
 insertTable :: Insert '(sym, schema) -> Table '(sym, schema)
