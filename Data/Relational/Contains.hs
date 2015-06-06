@@ -27,7 +27,7 @@ module Data.Relational.Contains (
   , tailContainsProof
   , typeListContainsProof
 
-  , ContainsProof(..)
+  , ContainsProof
 
   ) where
 
@@ -89,8 +89,8 @@ class Contains (xs :: [k]) (ys :: [k]) where
 
 instance Contains xs '[] where
     containsConstraint _ _ _ = EveryConstraint
-    tailContainsProof _ _ = ContainsProof
-    fmapContainsProof _ _ _ = ContainsProof
+    tailContainsProof _ _ = HasConstraint
+    fmapContainsProof _ _ _ = HasConstraint
     typeListContainsProof _ _ = HasConstraint
     {-
     elemTransitive = error "Impossible case; Elem x '[] is never true."
@@ -111,7 +111,7 @@ instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
 
     fmapContainsProof proxyF proxyXS proxyXYS = case (elem) of
         HasConstraint -> case (there) of
-            ContainsProof -> ContainsProof
+            HasConstraint -> HasConstraint
       where
         elem = fmapElemProof proxyF proxyX proxyXS
         there = fmapContainsProof proxyF proxyXS proxyYS 
@@ -122,7 +122,7 @@ instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
         proxyYS :: Proxy ys
         proxyYS = Proxy
 
-    tailContainsProof proxyXS proxyYS = ContainsProof
+    tailContainsProof proxyXS proxyYS = HasConstraint
 
     typeListContainsProof proxyXS proxyXYS = case typeListContainsProof proxyXS proxyYS of
         HasConstraint -> HasConstraint
@@ -144,6 +144,4 @@ instance (Elem x xs, Contains xs ys) => Contains xs (x ': ys) where
         proxyX = Proxy
     -}
 
--- | Proof of @Contains xs ys@, held in a GADT so we can pass the proof around.
-data ContainsProof (xs :: [k]) (ys :: [k]) where
-  ContainsProof :: Contains xs ys => ContainsProof xs ys
+type ContainsProof xs ys = HasConstraint (Contains xs) ys
