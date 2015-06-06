@@ -23,7 +23,7 @@ module Data.Relational.Select (
     Select(..)
   , select
   , selectTable
-  , selectProjection
+  , selectProjections
   , selectCondition
 
   , selectNone
@@ -41,61 +41,85 @@ import Data.Relational.Condition
 import Data.Relational.Schema
 
 -- | A selection from the database.
-data Select table selected (conditioned :: [[(Symbol, *)]]) where
+--   There are two @Project@ terms and types involved
+--     - @Project selected@ gives the columns from the table to isolate.
+--     - @Project projected@ gives the columns to output. This allows us to
+--       rename columns.
+data Select table selected projected (conditioned :: [[(Symbol, *)]]) where
   Select
     :: ( IsSubset selected schema
        , IsSubset (Concat conditioned) schema
        , TypeList (Snds selected)
+       , TypeList (Snds projected)
        , TypeList (Snds (Concat conditioned))
+       , (Snds selected) ~ (Snds projected)
+       -- Equality is too strong; it's enough to demand, for each
+       -- corresponding pair of types, an injection from selected to
+       -- projected. This requires more work, so I'll leave it for now.
        )
     => Table '(tableName, schema)
     -> Project selected
+    -> Project projected
     -> Condition conditioned
-    -> Select '(tableName, schema) selected conditioned
+    -> Select '(tableName, schema) selected projected conditioned
 
 select
-  :: ( IsSubset projected schema
+  :: ( IsSubset selected schema
      , IsSubset (Concat conditioned) schema
+     , TypeList (Snds selected)
      , TypeList (Snds projected)
      , TypeList (Snds (Concat conditioned))
      , KnownSymbol tableName
      , IsSchema schema
+     , IsProjection selected
      , IsProjection projected
+     , (Snds selected) ~ (Snds projected)
      )
   => Condition conditioned
-  -> Select '(tableName, schema) projected conditioned
-select condition = Select (table (schema Proxy)) (projection Proxy) condition
+  -> Select '(tableName, schema) selected projected conditioned
+select condition =
+    Select
+      (table (schema Proxy))
+      (projection Proxy)
+      (projection Proxy)
+      condition
 
 -- | The table for which this Select is relevant.
-selectTable :: Select '(tableName, schema) selected conditioned -> Table '(tableName, schema)
-selectTable (Select t _ _) = t
+selectTable
+  :: Select '(tableName, schema) selected projected conditioned
+  -> Table '(tableName, schema)
+selectTable (Select t _ _ _) = t
 
--- | The Project inside this Select.
-selectProjection :: Select '(tableName, schema) selected conditioned -> Project selected
-selectProjection (Select _ p _) = p
+-- | The @Project@s inside this Select.
+selectProjections
+  :: Select '(tableName, schema) selected projected conditioned
+  -> (Project selected, Project projected)
+selectProjections (Select _ s p _) = (s, p)
 
 -- | The Condition inside this Select.
-selectCondition :: Select '(tableName, schema) selected conditioned -> Condition conditioned
-selectCondition (Select _ _ c) = c
+selectCondition
+  :: Select '(tableName, schema) selected projected conditioned
+  -> Condition conditioned
+selectCondition (Select _ _ _ c) = c
 
 -- | A Select which selects no rows.
 selectNone
   :: ( KnownSymbol tableName
      , IsSchema schema
-     , IsProjection projection
-     , IsSubset projection schema
-     , TypeList (Snds projection)
+     , IsProjection projected
+     , IsSubset projected schema
+     , TypeList (Snds projected)
      )
-  => Select '(tableName, schema) projection '[ '[] ]
-selectNone = Select (table (schema Proxy)) (projection Proxy) (false .&&. true)
+  => Select '(tableName, schema) projected projected '[ '[] ]
+selectNone = select (false .&&. true)
 
 -- | A Select which selects all rows.
 selectAll
   :: ( KnownSymbol tableName
      , IsSchema schema
-     , IsProjection projection
-     , IsSubset projection schema
-     , TypeList (Snds projection)
+     , IsProjection projected
+     , IsSubset projected schema
+     , TypeList (Snds projected)
      )
-  => Select '(tableName, schema) projection '[]
-selectAll = Select (table (schema Proxy)) (projection Proxy) true
+  => Select '(tableName, schema) projected projected '[]
+selectAll = select true

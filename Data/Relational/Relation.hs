@@ -37,11 +37,12 @@ data Relation (db :: [(Symbol, [(Symbol, *)])]) (schema :: [(Symbol, *)]) where
     Selection
       :: ( Elem '(tableName, schema) db
          , Contains (Snds (Concat (Snds db))) (Snds schema)
-         , Contains (Snds (Concat (Snds db))) (Snds projection)
+         , Contains (Snds (Concat (Snds db))) (Snds selected)
+         , Contains (Snds (Concat (Snds db))) (Snds projected)
          , Contains (Snds (Concat (Snds db))) (Snds (Concat condition))
          )
-      => Select '(tableName, schema) projection condition
-      -> Relation db projection
+      => Select '(tableName, schema) selected projected condition
+      -> Relation db projected
 
     Intersection
       :: ()
@@ -60,7 +61,7 @@ relationParameterIsProjection
   :: Relation db projection
   -> HasConstraint IsProjection projection
 relationParameterIsProjection term = case term of
-    Selection select -> case projectIsProjection (selectProjection select) of
+    Selection select -> case projectIsProjection (snd (selectProjections select)) of
         HasConstraint -> HasConstraint
     Intersection left _ -> case relationParameterIsProjection left of
         HasConstraint -> HasConstraint
