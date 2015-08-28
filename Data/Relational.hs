@@ -27,6 +27,7 @@ module Data.Relational (
   , module Data.Relational.Delete
   , module Data.Relational.Update
   , module Data.Relational.Relation
+  , module Data.Relational.Universe
 
   ) where
 
@@ -47,3 +48,4 @@ import Data.Relational.Insert
 import Data.Relational.Delete
 import Data.Relational.Update
 import Data.Relational.Relation
+import Data.Relational.Universe

@@ -17,6 +17,7 @@ Portability : non-portable (GHC only)
 module Data.Relational.HasConstraint (
 
     HasConstraint(..)
+  , HasConstraint2(..)
 
   ) where
 
@@ -26,3 +27,6 @@ import GHC.Exts (Constraint)
 --   @c t@.
 data HasConstraint (c :: k -> Constraint) (t :: k) where
     HasConstraint :: c t => HasConstraint c t
+
+data HasConstraint2 (c :: k -> l -> Constraint) (s :: k) (t :: l) where
+    HasConstraint2 :: c s t => HasConstraint2 c s t

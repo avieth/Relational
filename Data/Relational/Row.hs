@@ -30,6 +30,7 @@ module Data.Relational.Row (
   , RowToHList
   , rowToHList
   , rowToHListProof
+  , rowHList
 
   {-
   , RestoreRowField(..)
@@ -82,6 +83,10 @@ rowToHListProof row = case row of
     (r :: Field '(sym, t)) :&| (rest :: Row ts) ->
         case rowToHListProof rest :: HasConstraint RowToHList ts of
             HasConstraint -> HasConstraint
+
+rowHList :: Row ts -> HList (Snds ts)
+rowHList row = case rowToHListProof row of
+    HasConstraint -> rowToHList row
 
 {-
 class RestoreRowField (t :: (Symbol, *)) (ts :: [(Symbol, *)]) (ss :: [(Symbol, *)]) where

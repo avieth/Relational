@@ -6,17 +6,9 @@ projections, and conditions to compose datatypes representing relations
 (selections, intersections, unions), insertions, updates, and deletions.
 It's the terminology of SQL and relational databases, embedded in Haskell at
 term *and* type level.
-Plenty of information is carried in the types, so the programmer can rest easy,
-safe in the knowledge that
 
-  - Every selection projects onto columns which are in the table's schema.
-  - Intersections and unions are well-formed.
-  - Every insertion provides a value of the right type for each column in the
-    table's schema.
-  - Every update provides a value of the right type for each column to be
-    updated, and the columns to be updated are a subset of the table's schema.
-  - Every column which is used in a condition on a selection, deletion, or
-    update is in the table's schema.
+Plenty of information is carried in the types, so the programmer can rest easy,
+safe in the knowledge that their mutations and queries are well-formed.
 
 Example use
 ===========
@@ -26,9 +18,15 @@ The form of this database can be made known to GHC at compile time like so:
 
 ```Haskell
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE PatternSynonyms #-}
+
+module Examples.Message where
 
 import Data.Relational
 import Data.Proxy
+import Data.TypeNat.Nat
 import qualified Data.Text as T
 
 newtype Username = Username T.Text
@@ -47,25 +45,36 @@ type ViewedColumn = '("viewed", Bool)
 type MessageBodyColumn = '("message_body", MessageBody)
 
 type UsersSchema = '[UsernameColumn, EmailColumn]
-type MessagesSchema = '[
-    SenderColumn
-  , ReceiverColumn
-  , SendTimeColumn
-  , ViewedColumn
-  , MessageBodyColumn
-  ]
 
+type MessagesSchema = '[
+      SenderColumn
+    , ReceiverColumn
+    , SendTimeColumn
+    , ViewedColumn
+    , MessageBodyColumn
+    ]
+
+-- This type describes the "users" table: its name and its schema.
 type UsersTable = '("users", UsersSchema)
+
+-- The "messages" table: its name and its schema.
 type MessagesTable = '("messages", MessagesSchema)
 
+-- Description of our database: just a list of tables.
 type ExampleDatabase = '[ UsersTable, MessagesTable ]
 
 messageInsertion
-  :: Sender
+  :: ( InRelationalUniverse universe Sender
+     , InRelationalUniverse universe Receiver
+     , InRelationalUniverse universe Date
+     , InRelationalUniverse universe MessageBody
+     , InRelationalUniverse universe Bool
+     )
+  => Sender
   -> Receiver
   -> Date
   -> MessageBody
-  -> Insert MessagesTable
+  -> Insert universe ExampleDatabase MessagesTable
 messageInsertion sender receiver time messageBody = insert row
   where
     row =     field sender
@@ -76,4 +85,4 @@ messageInsertion sender receiver time messageBody = insert row
           :&| EndRow
 ```
 
-See the rest of this example in [Message.hs](examples/Message.hs).
+See the rest of this example in [Message.hs](Examples/Message.hs).

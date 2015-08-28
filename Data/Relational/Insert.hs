@@ -13,6 +13,8 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Data.Relational.Insert (
 
@@ -23,37 +25,63 @@ module Data.Relational.Insert (
 
   ) where
 
-import GHC.TypeLits (KnownSymbol)
+import GHC.TypeLits (KnownSymbol, Symbol)
 import Data.Proxy
 import Data.Relational.TypeList
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Row
 import Data.Relational.Schema
+import Data.Relational.Database
+import Data.Relational.Universe
+
+-- TODO add db parameter to Insert, Update, Delete, and throw in uniqueness
+-- constraint on the database table names, and Elem of the target table in the
+-- db. This makes things more normal: relations, updates, deletes, and inserts
+-- all have the database as a type parameters, which seems reasonable: all of
+-- your relational terms are parameterized on the database form, which will
+-- probably be a type declared in a configuration file.
 
 -- | An insertion into @table@.
-data Insert table where
-  Insert
-    :: (TypeList (Snds schema))
-    => Table '(sym, schema)
-    -> Row schema
-    -> Insert '(sym, schema)
+data Insert (universe :: *) (db :: [(Symbol, [(Symbol, *)])]) (table :: (Symbol, [(Symbol, *)])) where
+
+    Insert
+      :: ( Every (InRelationalUniverse universe) (Snds schema)
+         , Elem '(name, schema) db
+         , Unique (TableNames db)
+         , TypeList (Snds schema)
+         )
+      => Table '(name, schema)
+      -> Row schema
+      -> Insert universe db '(name, schema)
 
 -- | For convenience: specify a type signature, and insert does the work for
 --   you.
 insert
-  :: ( IsSchema schema
-     , TypeList (Snds schema)
-     , KnownSymbol sym
-     )
-  => Row schema
-  -> Insert '(sym, schema)
-insert row = Insert (table (schema Proxy)) row
+    :: forall universe db schema name .
+       ( Every (InRelationalUniverse universe) (Snds schema)
+       , Elem '(name, schema) db
+       , Unique (TableNames db)
+       , TypeList (Snds schema)
+       , IsSchema (Length schema) schema
+       , KnownSymbol name
+       )
+    => Row schema
+    -> Insert universe db '(name, schema)
+insert row = Insert table row
 
 -- | The Table for which the Insert is relevant.
-insertTable :: Insert '(sym, schema) -> Table '(sym, schema)
-insertTable (Insert t _) = t
+insertTable
+    :: forall universe db schema name .
+       Insert universe db '(name, schema)
+    -> Table '(name, schema)
+insertTable insert = case insert of
+    Insert t _ -> t
 
 -- | The Row to be inserted.
-insertRow :: Insert '(sym, schema) -> Row schema
-insertRow (Insert _ r) = r
+insertRow
+    :: forall universe db schema name .
+       Insert universe db '(name, schema)
+    -> Row schema
+insertRow insert = case insert of
+    Insert _ r -> r
