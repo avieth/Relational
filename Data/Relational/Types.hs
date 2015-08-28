@@ -38,6 +38,8 @@ module Data.Relational.Types (
   , Snd
   , Snds
   , Snds2
+  , Trd
+  , Trds
   , Concat
   , Head
   , Tail
@@ -57,6 +59,7 @@ module Data.Relational.Types (
   , DropEmpty
   , Replace
   , And
+  , Or
   , IfElse
   , Append
   , Every
@@ -69,10 +72,12 @@ module Data.Relational.Types (
   , appendHList
   , HasDuplicates
   , Unique
+  , Length
 
   ) where
 
 import GHC.Exts (Constraint)
+import Data.TypeNat.Nat
 import Data.Proxy
 import Data.Relational.HasConstraint
 
@@ -98,6 +103,13 @@ type family Snds (ss :: [(k, l)]) :: [l] where
 type family Snds2 (ss :: [[(k, l)]]) :: [[l]] where
   Snds2 '[] = '[]
   Snds2 (xs ': rest) = (Snds xs) ': (Snds2 rest)
+
+type family Trd (t :: (j, k, l)) :: l where
+  Trd '(w, x, y) = y
+
+type family Trds (ss :: [(j, k, l)]) :: [l] where
+  Trds '[] = '[]
+  Trds ('(w, x, y) ': rest) = y ': (Trds rest)
 
 type family Concat (xs :: [[k]]) :: [k] where
   Concat '[] = '[]
@@ -234,9 +246,11 @@ type family Replace (x :: k) (y :: k) (xs :: [k]) :: [k] where
 
 type family And (x :: Bool) (y :: Bool) :: Bool where
   And 'True 'True = 'True
-  And 'False 'True = 'False
-  And 'True 'False = 'False
-  And 'False 'False = 'False
+  And x y = 'False
+
+type family Or (x :: Bool) (y :: Bool) :: Bool where
+  Or 'False 'False = 'False
+  Or x y = 'True
 
 type family IfElse (x :: Bool) (y :: k) (z :: k) :: k where
   IfElse 'True a b = a
@@ -295,3 +309,7 @@ type family HasDuplicates (xs :: [k]) (ys :: [k]) (zs :: [k]) :: Bool where
     HasDuplicates (x ': xs) (y ': ys) zs = HasDuplicates (x ': xs) ys zs
 
 type Unique xs = (HasDuplicates xs (Tail xs) (Tail xs)) ~ 'False
+
+type family Length (xs :: [k]) :: Nat where
+    Length '[] = Z
+    Length (x ': xs) = S (Length xs)

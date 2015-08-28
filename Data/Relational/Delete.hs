@@ -14,6 +14,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Data.Relational.Delete (
 
@@ -24,39 +25,57 @@ module Data.Relational.Delete (
 
   ) where
 
-import GHC.TypeLits (KnownSymbol)
+import GHC.TypeLits (Symbol, KnownSymbol)
 import Data.Proxy
 import Data.Relational.TypeList
 import Data.Relational.Types
 import Data.Relational.Table
 import Data.Relational.Condition
 import Data.Relational.Schema
+import Data.Relational.Universe
+import Data.Relational.Database
 
 -- | A deletion from @table@.
-data Delete table conditioned where
-  Delete
-    :: ( IsSubset (Concat conditioned) schema
-       , TypeList (Snds (Concat conditioned))
-       )
-    => Table '(sym, schema)
-    -> Condition conditioned
-    -> Delete '(sym, schema) conditioned
+data Delete (universe :: *) (db :: [(Symbol, [(Symbol, *)])]) (table :: (Symbol, [(Symbol, *)])) (conditioned :: [[[(*, Maybe (Symbol, Symbol))]]]) where
+
+    Delete
+      :: ( Every (InRelationalUniverse universe) (ConditionTypeList conditioned)
+         , Elem '(name, schema) db
+         , Unique (TableNames db)
+         , CompatibleCondition conditioned '[ '(name, schema) ]
+         , TypeList (ConditionTypeList conditioned)
+         )
+      => Table '(name, schema)
+      -> Condition conditioned
+      -> Delete universe db '(name, schema) conditioned
 
 -- | Create a Delete by giving a Constraint only. You must specify the type.
 delete
-  :: ( IsSubset (Concat conditioned) schema
-     , TypeList (Snds (Concat conditioned))
-     , KnownSymbol sym
-     , IsSchema schema
-     )
-  => Condition conditioned
-  -> Delete '(sym, schema) conditioned
-delete condition = Delete (table (schema Proxy)) condition
+    :: forall universe db name schema conditioned .
+       ( Every (InRelationalUniverse universe) (ConditionTypeList conditioned)
+       , Elem '(name, schema) db
+       , Unique (TableNames db)
+       , CompatibleCondition conditioned '[ '(name, schema) ]
+       , TypeList (ConditionTypeList conditioned)
+       , KnownSymbol name
+       , IsSchema (Length schema) schema
+       )
+    => Condition conditioned
+    -> Delete universe db '(name, schema) conditioned
+delete condition = Delete table condition
 
 -- | The table to which the deletion is relevant.
-deleteTable :: Delete '(sym, schema) conditioned -> Table '(sym, schema)
-deleteTable (Delete t _) = t
+deleteTable
+    :: forall universe db name schema conditioned .
+       Delete universe db '(name, schema) conditioned
+    -> Table '(name, schema)
+deleteTable delete = case delete of
+    Delete t _ -> t
 
 -- | The condition used in the deletion.
-deleteCondition :: Delete '(sym, schema) conditioned -> Condition conditioned
-deleteCondition (Delete _ c) = c
+deleteCondition
+    :: forall universe db name schema conditioned .
+       Delete universe db '(name, schema) conditioned
+    -> Condition conditioned
+deleteCondition delete = case delete of
+    Delete _ c -> c

@@ -18,6 +18,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Data.Relational.Schema (
 
@@ -31,7 +32,8 @@ module Data.Relational.Schema (
 
   ) where
 
-import GHC.TypeLits
+import GHC.TypeLits (Symbol, KnownSymbol)
+import Data.TypeNat.Nat
 import Data.Proxy
 import Data.Relational.HasConstraint
 import Data.Relational.Types
@@ -53,14 +55,14 @@ import Data.Relational.Column
 --       nameColumn = Column (Proxy :: Proxy "name") (Proxy :: Proxy Text)
 --     @
 --
-data Schema :: [(Symbol, *)] -> * where
-  EmptySchema :: Schema '[]
+data Schema :: Nat -> [(Symbol, *)] -> * where
+  EmptySchema :: Schema Z '[]
   ConsSchema
     :: ( NewElement sym (Fsts lst) ~ 'True
        )
     => Column '(sym, u)
-    -> Schema lst
-    -> Schema ('(sym, u) ': lst)
+    -> Schema n lst
+    -> Schema (S n) ('(sym, u) ': lst)
 
 pattern EndSchema = EmptySchema
 
@@ -69,23 +71,23 @@ pattern col :| rest = ConsSchema col rest
 
 -- | This typelcass is here only to allow automatic generation of schema
 --   terms according to their types.
-class IsSchema (schema :: [(Symbol, *)]) where
-    schema :: Proxy schema -> Schema schema
+class IsSchema (n :: Nat) (schema :: [(Symbol, *)]) where
+    schema :: Proxy schema -> Schema n schema
 
-instance IsSchema '[] where
+instance IsSchema Z '[] where
     schema _ = EndSchema
 
 instance
     ( NewElement sym (Fsts schema) ~ 'True
     , KnownSymbol sym
-    , IsSchema schema
-    ) => IsSchema ( '(sym, ty) ': schema)
+    , IsSchema n schema
+    ) => IsSchema (S n) ( '(sym, ty) ': schema)
   where
     schema _ = column :| schema Proxy
 
 -- | Proof that for any Schema ts, IsSchema ts.
-schemaIsSchema :: Schema ts -> HasConstraint IsSchema ts
+schemaIsSchema :: Schema n ts -> HasConstraint2 IsSchema n ts
 schemaIsSchema schema = case schema of
-    EndSchema -> HasConstraint
+    EndSchema -> HasConstraint2
     (Column _ _) :| rest -> case schemaIsSchema rest of
-                                HasConstraint -> HasConstraint
+                                HasConstraint2 -> HasConstraint2

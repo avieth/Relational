@@ -29,51 +29,84 @@ module Data.Relational.Condition (
   , ConditionConjunction(..)
   , ConditionDisjunction(..)
   , ConditionTerminal(..)
+  , ConditionValue(..)
+
+  , lit
+  , col
 
   , (.==.)
   , (.<.)
   , (.>.)
   , (.&&.)
   , (.||.)
+  , null
   , true
   , false
 
   , conditionValues
+  , ConditionTypeList
+  , ValueTypeList
 
-  --, AppendCondition
-  --, appendCondition
+  , ConditionSymbols
 
-  --, RemoveTerminalConditions(..)
-  --, DropEmptyDisjuncts(..)
+  , CompatibleCondition
+  , CompatibleConditionMember
 
   ) where
 
+import Prelude hiding (null)
 import GHC.TypeLits
+import GHC.Exts (Constraint)
 import Data.Proxy
 import Data.Relational.Types
 import Data.Relational.Column
 import Data.Relational.Field
 import Data.Relational.Row
+import Data.Relational.HasConstraint
 import Unsafe.Coerce
 
 -- | A Condition is a conjunction of disjunctions.
 type Condition = ConditionConjunction
 
 -- | A conjunction of disjunctions.
-data ConditionConjunction :: [[(Symbol, *)]] -> * where
+data ConditionConjunction :: [[[(*, Maybe (Symbol, Symbol))]]] -> * where
   AndCondition :: ConditionDisjunction ts -> ConditionConjunction tss -> ConditionConjunction (ts ': tss)
   AlwaysTrue :: ConditionConjunction '[]
 
 -- | A disjunction of terminals.
-data ConditionDisjunction :: [(Symbol, *)] -> * where
-  OrCondition :: ConditionTerminal t -> ConditionDisjunction ts -> ConditionDisjunction (t ': ts)
+data ConditionDisjunction :: [[(*, Maybe (Symbol, Symbol))]] -> * where
+  OrCondition :: ConditionTerminal ts -> ConditionDisjunction tss -> ConditionDisjunction ( ts ': tss )
   AlwaysFalse :: ConditionDisjunction '[]
 
 -- | Terminal conditions.
-data ConditionTerminal :: (Symbol, *) -> * where
-  EqCondition :: Field '(sym, t) -> ConditionTerminal '(sym, t)
-  LtCondition :: Field '(sym, t) -> ConditionTerminal '(sym, t)
-  GtCondition :: Field '(sym, t) -> ConditionTerminal '(sym, t)
+--   These are combinations of @ConditionValue@s sharing the same * type, which
+--   also appears in the type of this @ConditionTerminal@. The other parameter
+--   indicates the table/column names which are used by the @ConditionValue@s.
+--   It's a list because we have different arities.
+data ConditionTerminal :: [(*, Maybe (Symbol, Symbol))] -> * where
+  -- Issue here with the unary terminals: the type doesn't have enough info
+  -- to know that these never require 2 values.
+  BoolCondition :: ConditionValue Bool t -> ConditionTerminal '[ '(Bool, t) ]
+  NullCondition :: ConditionValue s t -> ConditionTerminal '[ '(s, t) ]
+  -- NB we hold those first type parameters equal, so that we know we really
+  -- can compare them.
+  -- TBD relax to Coercible?
+  EqCondition :: ConditionValue s t -> ConditionValue s u -> ConditionTerminal '[ '(s, t), '(s, u) ]
+  LtCondition :: ConditionValue s t -> ConditionValue s u -> ConditionTerminal '[ '(s, t), '(s, u) ]
+  GtCondition :: ConditionValue s t -> ConditionValue s u -> ConditionTerminal '[ '(s, t), '(s, u) ]
+  NotCondition :: ConditionTerminal ts -> ConditionTerminal ts
+
+-- | A value to be used in a condition. Can either be a literal value or
+--   a reference to some named column (table name included).
+data ConditionValue :: * -> Maybe (Symbol, Symbol) -> * where
+  LiteralValue :: t -> ConditionValue t Nothing
+  ColumnValue :: KnownSymbol tbl => Proxy tbl -> Column '(sym, t) -> ConditionValue t (Just '(tbl, sym))
+
+lit :: t -> ConditionValue t Nothing
+lit = LiteralValue
+
+col :: forall tbl sym t . (KnownSymbol tbl, KnownSymbol sym) => Proxy '(tbl, sym) -> ConditionValue t (Just '(tbl, sym))
+col _ = ColumnValue (Proxy :: Proxy tbl) (column :: Column '(sym, t))
 
 instance Show (ConditionConjunction '[]) where
   show c = case c of
@@ -93,22 +126,39 @@ instance Show (ConditionDisjunction '[]) where
       AlwaysFalse -> "False"
 
 instance
-    ( Show (Snd t)
-    , Show (ConditionDisjunction ts)
-    ) => Show (ConditionDisjunction (t ': ts))
+    ( Show (ConditionTerminal ts)
+    , Show (ConditionDisjunction tss)
+    ) => Show (ConditionDisjunction (ts ': tss))
   where
     show d = case d of
         OrCondition terminal disjunction ->
             concat [show terminal, " v ", show disjunction]
 
-instance (Show (Snd t)) => Show (ConditionTerminal t) where
+instance (Show t) => Show (ConditionTerminal '[ '(t, sym) ]) where
   show t = case t of
-      EqCondition field ->
-          concat [columnName (fieldColumn field), " = ", show (fieldValue field)]
-      LtCondition field ->
-          concat [columnName (fieldColumn field), " < ", show (fieldValue field)]
-      GtCondition field ->
-          concat [columnName (fieldColumn field), " > ", show (fieldValue field)]
+      BoolCondition v ->
+          show v
+      NullCondition v ->
+          concat [show v, " is null"]
+      NotCondition term ->
+          concat ["¬ (", show term, ")"]
+
+instance (Show t1, Show t2) => Show (ConditionTerminal '[ '(t1, sym1), '(t2, sym2) ]) where
+  show t = case t of
+      EqCondition v1 v2 ->
+          concat [show v1, " = ", show v2]
+      LtCondition v1 v2 ->
+          concat [show v1, " < ", show v2]
+      GtCondition v1 v2 ->
+          concat [show v1, " > ", show v2]
+      NotCondition term ->
+          concat ["¬ (", show term, ")"]
+
+instance Show t => Show (ConditionValue t maybeSymbols) where
+  show t = case t of
+      LiteralValue x -> show x
+      ColumnValue proxyTable col ->
+          concat [symbolVal proxyTable, ".", columnName col]
 
 infixr 7 .&&.
 infixr 8 .||.
@@ -116,120 +166,102 @@ infixr 9 .==.
 infixr 9 .<.
 infixr 9 .>.
 
-(.==.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
-(.==.) (Column proxy _) x = EqCondition (Field proxy x)
+(.==.) :: ConditionValue s t -> ConditionValue s u -> ConditionTerminal '[ '(s, t), '(s, u) ]
+(.==.) = EqCondition
 
-(.<.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
-(.<.) (Column proxy _) x = LtCondition (Field proxy x)
+(.<.) :: ConditionValue s t -> ConditionValue s u -> ConditionTerminal '[ '(s, t), '(s, u) ]
+(.<.) = LtCondition
 
-(.>.) :: Column '(sym, t) -> t -> ConditionTerminal '(sym, t)
-(.>.) (Column proxy _) x = GtCondition (Field proxy x)
+(.>.) :: ConditionValue s t -> ConditionValue s u -> ConditionTerminal '[ '(s, t), '(s, u) ]
+(.>.) = GtCondition
 
-(.&&.) :: ConditionDisjunction cs -> ConditionConjunction cs' -> Condition (cs ': cs')
+(.&&.) :: ConditionDisjunction cs -> ConditionConjunction css -> Condition (cs ': css)
 (.&&.) = AndCondition
 
-(.||.) :: ConditionTerminal c -> ConditionDisjunction cs -> ConditionDisjunction (c ': cs)
+(.||.) :: ConditionTerminal cs -> ConditionDisjunction css -> ConditionDisjunction ( cs ': css)
 (.||.) = OrCondition
 
+null :: ConditionValue s t -> ConditionTerminal '[ '(s, t) ]
+null = NullCondition
+
+true :: ConditionConjunction '[]
 true = AlwaysTrue
+
+false :: ConditionDisjunction '[]
 false = AlwaysFalse
+
+type family ValueTypeList (xs :: [[(*, Maybe (Symbol, Symbol))]]) :: [*] where
+    ValueTypeList '[] = '[]
+    ValueTypeList ('[] ': xss) = ValueTypeList xss
+    ValueTypeList (( '(s, Nothing) ': xs ) ': xss) = s ': (ValueTypeList (xs ': xss))
+    ValueTypeList (( '(s, Just t) ': xs ) ': xss) = ValueTypeList (xs ': xss)
+
+type family ConditionTypeList (xs :: [[[(*, Maybe (Symbol, Symbol))]]]) :: [*] where
+    ConditionTypeList '[] = '[]
+    ConditionTypeList (xss ': xsss) = Append (ValueTypeList xss) (ConditionTypeList xsss)
+
+type family ConditionSymbols (xs :: [[[(*, Maybe (Symbol, Symbol))]]]) :: [(Symbol, Symbol)] where
+    ConditionSymbols '[] = '[]
+    ConditionSymbols ( '[] ': xsss ) = ConditionSymbols xsss
+    ConditionSymbols ( ( '[] ': xss ) ': xsss ) = ConditionSymbols (xss ': xsss)
+    ConditionSymbols ( ( ( '(t, Nothing) ': xs) ': xss ) ': xsss ) = ConditionSymbols ( (xs ': xss) ': xsss )
+    ConditionSymbols ( ( ( '(t, Just '(sym1, sym2)) ': xs) ': xss ) ': xsss ) = '(sym1, sym2) ': ConditionSymbols ( (xs ': xss) ': xsss )
+
+type family CompatibleCondition (xs :: [[[(*, Maybe (Symbol, Symbol))]]]) (tbls :: [(Symbol, [(Symbol, *)])]) :: Constraint where
+    CompatibleCondition '[] tables = ()
+    CompatibleCondition ( '[] ': xsss ) tables = CompatibleCondition xsss tables
+    CompatibleCondition ( ( '[] ': xss ) ': xsss ) tables = CompatibleCondition (xss ': xsss) tables
+    CompatibleCondition ( ( ( '(t, Nothing) ': xs) ': xss ) ': xsss ) tables = CompatibleCondition ( (xs ': xss) ': xsss ) tables
+    CompatibleCondition ( ( ( '(t, Just '(sym1, sym2)) ': xs) ': xss ) ': xsss ) tables = (
+          CompatibleConditionMember '(t, Just '(sym1, sym2)) tables ~ True
+        , CompatibleCondition ( (xs ': xss) ': xsss ) tables
+        )
+
+type family CompatibleConditionMember (x :: (*, Maybe (Symbol, Symbol))) (tbls :: [(Symbol, [(Symbol, *)])]) :: Bool where
+    CompatibleConditionMember x '[] = False
+    CompatibleConditionMember ( '(t, Nothing ) ) xs = True
+    CompatibleConditionMember ( '(t, Just '(sym1, sym2)) ) ( '(sym1, ( '(sym2, t) ': ts) ) ': rest) = True
+    CompatibleConditionMember ( '(t, Just '(sym1, sym2)) ) ( '(sym1, ( '(sym3, s) ': ts) ) ': rest) = CompatibleConditionMember ( '(t, Just '(sym1, sym2)) ) ( '(sym1, ts) ': rest )
+    CompatibleConditionMember ( '(t, Just '(sym1, sym2)) ) ( '(sym1, '[]) ': rest) = CompatibleConditionMember ( '(t, Just '(sym1, sym2)) ) rest
+    CompatibleConditionMember ( '(t, Just '(sym1, sym2)) ) ( '(sym3, table) ': rest) = CompatibleConditionMember ( '(t, Just '(sym1, sym2)) ) rest
 
 -- | Extract the values used in a Condition, i.e. the reference values for
 --   equality and ordering.
-conditionValues :: Condition cs -> HList (Snds (Concat cs))
+conditionValues :: Condition cs -> HList (ConditionTypeList cs)
 conditionValues cdn = case cdn of
-    -- We know that
-    --   (Snds (Append ts (Concat tss)) ~ Append (Snds ts) (Snds (Concat tss)))
-    -- but GHC does not, so unsafeCoerce saves the day.
-    AndCondition disjunct rest -> unsafeCoerce (appendHList (conditionValuesDisjunct disjunct) (conditionValues rest))
+    AndCondition disjunct rest -> (appendHList (conditionValuesDisjunct disjunct) (conditionValues rest))
     AlwaysTrue -> HNil
 
-conditionValuesDisjunct :: ConditionDisjunction cs -> HList (Snds cs)
+conditionValuesDisjunct :: ConditionDisjunction cs -> HList (ValueTypeList cs)
 conditionValuesDisjunct disjunct = case disjunct of
-    -- We know that
-    --   Snds (t : ts) ~ Append '[Snd t] (Snds ts)
-    -- but GHC does not, so we must unsafeCoerce
-    OrCondition terminal rest -> unsafeCoerce (appendHList (conditionValueTerminal terminal) (conditionValuesDisjunct rest))
+    -- GHC could not deduce (ValueTypeList (ts : tss) ~ Append (ValueTypeList '[ts]) (ValueTypeList tss))
+    --   from the context (cs ~ (ts : tss))
+    -- but _we_ can deduce this, so we unsafeCoerce
+    OrCondition terminal rest -> unsafeCoerce $ appendHList (conditionValueTerminal terminal) (conditionValuesDisjunct rest)
     AlwaysFalse -> HNil
 
-conditionValueTerminal :: ConditionTerminal t -> HList '[Snd t]
+conditionValueTerminal :: ConditionTerminal ss -> HList (ValueTypeList '[ ss ])
 conditionValueTerminal terminal = case terminal of
-    EqCondition field -> fieldValue field :> HNil
-    LtCondition field -> fieldValue field :> HNil
-    GtCondition field -> fieldValue field :> HNil
+    BoolCondition v -> conditionValueValue v
+    NullCondition v -> conditionValueValue v
+    -- Could not deduce
+    --     (Append (ValueTypeList '['['(s, t)]]) (ValueTypeList '['['(s, u)]])
+    --     ~ ValueTypeList '[ss])
+    --   from the context (ss ~ '['(s, t), '(s, u)])
+    -- but we know that Append (ValueTypeList x) (ValueTypeList y) = ValueTypeList (Append x y)
+    -- so it's all good.
+    EqCondition v1 v2 -> unsafeCoerce $ appendHList (conditionValueValue v1) (conditionValueValue v2)
+    LtCondition v1 v2 -> unsafeCoerce $ appendHList (conditionValueValue v1) (conditionValueValue v2)
+    GtCondition v1 v2 -> unsafeCoerce $ appendHList (conditionValueValue v1) (conditionValueValue v2)
+    NotCondition t -> conditionValueTerminal t
 
-{-
-class AppendCondition t xs ys where
-  appendCondition :: t xs -> t ys -> t (Append xs ys)
+conditionValueValue :: ConditionValue s t -> HList (ValueTypeList '[ '[ '(s, t) ] ])
+conditionValueValue v = case v of
+    LiteralValue x -> x :> HNil
+    ColumnValue _ _ -> HNil
 
-instance AppendCondition ConditionDisjunction '[] ys where
-  appendCondition _ ys = ys
-
-instance AppendCondition ConditionDisjunction xs ys => AppendCondition ConditionDisjunction (x ': xs) ys where
-  -- (Append (t : ts) ys ~ (t : Append ts ys))
-  -- GHC cannot deduce that, but I can. So unsafeCoerce
-  appendCondition (OrCondition left right) right' = unsafeCoerce $
-      OrCondition left (appendCondition right right')
-
-instance AppendCondition ConditionConjunction '[] ys where
-  appendCondition _ ys = ys
-
-instance AppendCondition ConditionConjunction xs ys => AppendCondition ConditionConjunction (x ': xs) ys where
-  -- Append (ts : tss) ys ~ (ts : Append tss ys)
-  -- Must unsafeCoerce past this obvious fact.
-  appendCondition (AndCondition left right) right' = unsafeCoerce $
-      AndCondition left (appendCondition right right')
-
--- Now, to juggle Conditions like we do Projects and Rows.
--- We have a list of the form [[(Symbol, *)]]. What can we do with it?
--- We can drop terminals for a given field, identified by the (Symbol, *) pair,
--- so as to accomodate smaller schemas. We can also add new disjunctions, but
--- that's easy. All we need to do, I think, is to drop. I don't think it's
--- necessary ever to add a new disjunct to an existing disjunction... Nope, not
--- necessary! You can just take that disjunct, add your disjunction, and throw
--- the whole new disjunct in! Yeah, all we need to be able to do is remove a
--- terminal.
-
-class RemoveTerminalConditions (t :: (Symbol, *)) (tss :: [[(Symbol, *)]]) where
-    removeTerminalConditions :: Proxy t -> Condition tss -> Condition (RemoveAll2 t tss)
-
-instance RemoveTerminalConditions t '[] where
-    removeTerminalConditions proxy = id
-
-instance (RemoveTerminalConditions' t ts, RemoveTerminalConditions t tss) => RemoveTerminalConditions t (ts ': tss) where
-    removeTerminalConditions proxy (AndCondition disjunction conjunction) =
-        AndCondition (removeTerminalConditions' proxy disjunction) (removeTerminalConditions proxy conjunction)
-
-class DropEmptyDisjuncts (tss :: [[(Symbol, *)]]) where
-    dropEmptyDisjuncts :: Condition tss -> Condition (DropEmpty tss)
-
-instance DropEmptyDisjuncts '[] where
-    dropEmptyDisjuncts = id
-
-instance DropEmptyDisjuncts ts => DropEmptyDisjuncts ('[] ': ts) where
-    dropEmptyDisjuncts (AndCondition emptyDisjunct rest) = dropEmptyDisjuncts rest
-
-instance DropEmptyDisjuncts ts => DropEmptyDisjuncts (ss ': ts) where
-    -- We know that
-    --   (DropEmpty (ts1 : tss) ~ (ts1 : DropEmpty tss))
-    -- because if not, the more specific instance would be used.
-    -- unsafeCoerce to the rescue.
-    dropEmptyDisjuncts (AndCondition disjunct rest) = unsafeCoerce (AndCondition disjunct (dropEmptyDisjuncts rest))
-
-class RemoveTerminalConditions' (t :: (Symbol, *)) (ts :: [(Symbol, *)]) where
-    removeTerminalConditions' :: Proxy t -> ConditionDisjunction ts -> ConditionDisjunction (RemoveAll t ts)
-
-instance RemoveTerminalConditions' t '[] where
-    removeTerminalConditions' proxy = id
-
-instance RemoveTerminalConditions' t ts => RemoveTerminalConditions' t (t ': ts) where
-    removeTerminalConditions' proxy (OrCondition terminal rest) = removeTerminalConditions' proxy rest
-
-instance RemoveTerminalConditions' t ts => RemoveTerminalConditions' t (s ': ts) where
-    -- We know that
-    --   (RemoveAll t (t1 : ts1) ~ (t1 : RemoveAll t ts1))
-    -- because if t ~ t1 then the more specific instance would have been picked.
-    -- Thus we unsafeCoerce
-    removeTerminalConditions' proxy (OrCondition terminal rest) =
-        unsafeCoerce (OrCondition terminal (removeTerminalConditions' proxy rest))
--}
+ex :: Condition '[
+      '[ '[ '(Bool, Just '("table1", "b")) ], '[ '(Int, Just '("table2", "c")), '(Int, Nothing) ] ]
+    , '[ '[ '(String, Nothing), '(String, Just '("table2", "a")) ] ]
+    ]
+ex = BoolCondition (col Proxy) .||. GtCondition (col Proxy) (lit 1) .||. false .&&. EqCondition (lit "foobar") (col Proxy) .||. false .&&. true

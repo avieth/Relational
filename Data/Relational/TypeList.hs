@@ -16,25 +16,39 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Data.Relational.TypeList (
 
-    TypeList
+    NonEmpty
+  , TypeListDeconstruct(..)
+  , TypeList(..)
   , TypeListProof
-  , typeListBuild
-  , typeListMap
-  , typeListUnmap
-  , typeListFmapProof
 
   ) where
 
+import Data.Void
 import Data.Proxy
 import Data.Relational.HasConstraint
 import Data.Relational.Types
 
+class NonEmpty (lst :: [k])
+instance NonEmpty (t ': ts)
+
+data TypeListDeconstruct (lst :: [k]) where
+    TypeListDeconstructNil :: (lst ~ '[]) => TypeListDeconstruct lst
+    TypeListDeconstructCons :: (TypeList (TypeListTail lst), lst ~ (TypeListHead lst ': TypeListTail lst)) => TypeListDeconstruct lst
+
 -- | Any [k] is an instance of TypeList. This allows for type-directed
 --   computation via @typeListBuild@, @typeListMap@, and @typeListUnmap@.
 class TypeList (lst :: [k]) where
+
+  type TypeListHead lst :: k
+  type TypeListTail lst :: [k]
+
+  typeListDeconstruct :: Proxy lst -> TypeListDeconstruct lst
 
   -- | Build an @a lst@ from an @a '[]@ just by indicating how to
   --   build and @a (t ': ts)@ from an @a ts@.
@@ -79,13 +93,45 @@ class TypeList (lst :: [k]) where
     -> Proxy lst
     -> TypeListProof (Fmap f lst)
 
+  -- Using typeListEvery, we can lift a constraint entailment into a type
+  -- list: if constraint c implies constraint d, then if c holds of every
+  -- type in this list, d holds of every type in this list.
+  typeListEvery
+    :: (forall s . HasConstraint c s -> HasConstraint d s)
+    -> EveryConstraint c lst
+    -> EveryConstraint d lst
+
+  typeListEveryFmap
+    :: (forall s . HasConstraint c s -> HasConstraint d (f s))
+    -> EveryConstraint c lst
+    -> EveryConstraint d (Fmap f lst)
+
+  typeListEveryFmap1
+    :: (forall s . HasConstraint c (f s))
+    -> Proxy lst
+    -> EveryConstraint c (Fmap f lst)
+
 instance TypeList '[] where
+  -- TBD can we get something like Void but of arbitrary kind?
+  -- I don't think so... we can leave this out, so long as we're careful to
+  -- ensure that it's used only when we know that the list is not empty.
+  --type TypeListHead '[] = Void
+  type TypeListTail '[] = '[]
+  typeListDeconstruct _ = TypeListDeconstructNil
   typeListBuild _ _ _ b = b
   typeListMap _ _ _ f builder splitter xs b = b
   typeListUnmap _ _ _ f builder splitter xs b = b
   typeListFmapProof _ _ = HasConstraint
+  typeListEvery _ _ = EveryConstraint
+  typeListEveryFmap _ _ = EveryConstraint
+  typeListEveryFmap1 _ _ = EveryConstraint
 
 instance TypeList ts => TypeList (t ': ts) where
+
+  type TypeListHead (t ': ts) = t
+  type TypeListTail (t ': ts) = ts
+
+  typeListDeconstruct _ = TypeListDeconstructCons
 
   typeListBuild proxyLst proxyC builder b =
       builder proxyHead (typeListBuild proxyTail proxyC builder b)
@@ -108,5 +154,26 @@ instance TypeList ts => TypeList (t ': ts) where
     where
       proxyTail :: Proxy ts
       proxyTail = Proxy
+
+  typeListEvery trans (every :: EveryConstraint c (t ': ts)) = case every of
+      EveryConstraint -> case trans (HasConstraint :: HasConstraint c t) of
+          HasConstraint -> case typeListEvery trans (EveryConstraint :: EveryConstraint c ts) of
+              EveryConstraint -> EveryConstraint
+
+  typeListEveryFmap (hasConstraint :: forall s . HasConstraint c s -> HasConstraint d (f s)) (everyConstraint :: EveryConstraint c (t ': ts)) = case rest of
+      EveryConstraint -> case everyConstraint of
+          EveryConstraint -> case hasConstraint (HasConstraint :: HasConstraint c t) of
+              HasConstraint -> EveryConstraint
+    where
+      rest :: EveryConstraint d (Fmap f ts)
+      rest = case everyConstraint of
+          EveryConstraint -> typeListEveryFmap hasConstraint (EveryConstraint :: EveryConstraint c ts)
+
+  typeListEveryFmap1 (hasConstraint :: forall s . HasConstraint c (f s)) _ = case rest of
+      EveryConstraint -> case hasConstraint :: HasConstraint c (f t) of
+          HasConstraint -> EveryConstraint
+    where
+      rest :: EveryConstraint c (Fmap f ts)
+      rest = typeListEveryFmap1 hasConstraint (Proxy :: Proxy ts)
 
 type TypeListProof ts = HasConstraint TypeList ts

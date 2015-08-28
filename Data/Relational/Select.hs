@@ -1,11 +1,22 @@
 {-|
 Module      : Data.Relational.Select
-Description : Description of a QueryOnTable in a given universe.
+Description : Description of selections of columns.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
 Stability   : experimental
 Portability : non-portable (GHC only)
+
+Selections can be created from type signatures. Just specify the type of the
+selection you want, and use @selection Proxy@. For instance, to select
+a UUID named id from table1 and a String called name from table2, you could
+write:
+
+  @
+    mySelection :: Select '[ '("table1", "id", UUID), '("table2", "name", String) ]
+    mySelection = select Proxy
+  @
+
 -}
 
 {-# LANGUAGE AutoDeriveTypeable #-}
@@ -14,112 +25,105 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ConstraintKinds #-}
 
 module Data.Relational.Select (
 
     Select(..)
-  , select
-  , selectTable
-  , selectProjections
-  , selectCondition
+  , pattern EndSelect
+  , pattern (:+>)
+  , fullSelect
 
-  , selectNone
-  , selectAll
+  , IsSelect
+  , select
+
+  , selectIsTypeList
+  , selectIsSelect
+
+  , PrefixSelect
+  , UnprefixSelect
+  , SingleTableNameSelect
+  , DoubleTableNameSelect
 
   ) where
 
-import GHC.TypeLits (Symbol, KnownSymbol)
+import GHC.TypeLits (Symbol, KnownSymbol, symbolVal)
+import Data.TypeNat.Nat
 import Data.Proxy
-import Data.Coerce (Coercible)
+import Data.Relational.HasConstraint
 import Data.Relational.TypeList
 import Data.Relational.Types
-import Data.Relational.Table
-import Data.Relational.Project
-import Data.Relational.Condition
+import Data.Relational.Column
 import Data.Relational.Schema
 
--- | A selection from the database.
---   There are two @Project@ terms and types involved
---     - @Project selected@ gives the columns from the table to isolate.
---     - @Project projected@ gives the columns to output. This allows us to
---       rename columns.
-data Select table selected projected (conditioned :: [[(Symbol, *)]]) where
-  Select
-    :: ( IsSubset selected schema
-       , IsSubset (Concat conditioned) schema
-       , TypeList (Snds selected)
-       , TypeList (Snds projected)
-       , TypeList (Snds (Concat conditioned))
-       , Coercible (Snds selected) (Snds projected)
-       -- We use Coercible to ensure that the types in selected and projected,
-       -- though possibly different, have the same representation.
-       )
-    => Table '(tableName, schema)
-    -> Project selected
-    -> Project projected
-    -> Condition conditioned
-    -> Select '(tableName, schema) selected projected conditioned
+type family PrefixSelect (s :: Symbol) (p :: [(Symbol, *)]) :: ([(Symbol, Symbol, *)]) where
+    PrefixSelect s '[] = '[]
+    PrefixSelect s ( '(x, y) ': rest ) = '(s, x, y) ': (PrefixSelect s rest)
 
-select
-  :: ( IsSubset selected schema
-     , IsSubset (Concat conditioned) schema
-     , TypeList (Snds selected)
-     , TypeList (Snds projected)
-     , TypeList (Snds (Concat conditioned))
-     , KnownSymbol tableName
-     , IsSchema schema
-     , IsProjection selected
-     , IsProjection projected
-     , Coercible (Snds selected) (Snds projected)
-     )
-  => Condition conditioned
-  -> Select '(tableName, schema) selected projected conditioned
-select condition =
-    Select
-      (table (schema Proxy))
-      (projection Proxy)
-      (projection Proxy)
-      condition
+type family UnprefixSelect (ps :: [(Symbol, Symbol, *)]) :: ([(Symbol, *)]) where
+    UnprefixSelect '[] = '[]
+    UnprefixSelect ( '(x, y, z) ': rest ) = '(y, z) ': (UnprefixSelect rest)
 
--- | The table for which this Select is relevant.
-selectTable
-  :: Select '(tableName, schema) selected projected conditioned
-  -> Table '(tableName, schema)
-selectTable (Select t _ _ _) = t
+type family SingleTableNameSelect (s :: Symbol) (p :: [(Symbol, Symbol, *)]) :: Bool where
+    SingleTableNameSelect s '[] = True
+    SingleTableNameSelect s ( '(s, x, y) ': rest ) = SingleTableNameSelect s rest
+    SingleTableNameSelect s ( '(t, x, y) ': rest ) = False
 
--- | The @Project@s inside this Select.
-selectProjections
-  :: Select '(tableName, schema) selected projected conditioned
-  -> (Project selected, Project projected)
-selectProjections (Select _ s p _) = (s, p)
+type family DoubleTableNameSelect (s :: Symbol) (t :: Symbol) (p :: [(Symbol, Symbol, *)]) :: Bool where
+    DoubleTableNameSelect s t '[] = True
+    DoubleTableNameSelect s t ( '(s, x, y) ': rest ) = DoubleTableNameSelect s t rest
+    DoubleTableNameSelect s t ( '(t, x, y) ': rest ) = DoubleTableNameSelect s t rest
+    DoubleTableNameSelect s t ( '(u, x, y) ': rest ) = False
 
--- | The Condition inside this Select.
-selectCondition
-  :: Select '(tableName, schema) selected projected conditioned
-  -> Condition conditioned
-selectCondition (Select _ _ _ c) = c
+-- | A description of which columns to select.
+--   A Project is like a schema, but there can be duplicate columns.
+--   We also throw another symbol onto each column: the name of the table from
+--   which to pull it.
+data Select :: Nat -> [(Symbol, Symbol, *)] -> * where
+  -- TODO should be no empty select... you have to select at least one thing.
+  EmptySelect :: Select Z '[]
+  ConsSelect :: (KnownSymbol tbl) => (Proxy tbl, Column '(sym, u)) -> Select n lst -> Select (S n) ('(tbl, sym, u) ': lst)
 
--- | A Select which selects no rows.
-selectNone
-  :: ( KnownSymbol tableName
-     , IsSchema schema
-     , IsProjection projected
-     , IsSubset projected schema
-     , TypeList (Snds projected)
-     )
-  => Select '(tableName, schema) projected projected '[ '[] ]
-selectNone = select (false .&&. true)
+instance Show (Select n ts) where
+  show sel = case sel of
+      EmptySelect -> "EndSelect"
+      ConsSelect (tblProxy, col) rest -> concat [symbolVal tblProxy, ".", show col, " :+> ", show rest]
 
--- | A Select which selects all rows.
-selectAll
-  :: ( KnownSymbol tableName
-     , IsSchema schema
-     , IsProjection projected
-     , IsSubset projected schema
-     , TypeList (Snds projected)
-     )
-  => Select '(tableName, schema) projected projected '[]
-selectAll = select true
+pattern EndSelect = EmptySelect
+
+infixr 9 :+>
+pattern col :+> rest = ConsSelect (Proxy, col) rest
+
+-- | A selection onto every column in a schema.
+fullSelect :: KnownSymbol tableName => Proxy tableName -> Schema n schema -> Select n (PrefixSelect tableName schema)
+fullSelect proxy sch = case sch of
+    EmptySchema -> EmptySelect
+    ConsSchema col rest -> ConsSelect (proxy, col) (fullSelect proxy rest)
+
+selectIsTypeList :: Select n ts -> HasConstraint TypeList ts
+selectIsTypeList prj = case prj of
+    EndSelect -> HasConstraint
+    x :+> rest -> case selectIsTypeList rest of
+                      HasConstraint -> HasConstraint
+
+selectIsSelect :: Select n ts -> HasConstraint2 IsSelect n ts
+selectIsSelect prj = case prj of
+    EndSelect -> HasConstraint2
+    (Column _ _) :+> rest -> case selectIsSelect rest of
+                                 HasConstraint2 -> HasConstraint2
+
+-- | We use this typeclass to provide automatic projection generation based
+--   on its type.
+class IsSelect (n :: Nat) (select :: [(Symbol, Symbol, *)]) where
+    select :: Proxy select -> Select n select
+
+instance IsSelect Z '[] where
+    select _ = EndSelect
+
+instance (KnownSymbol tbl, KnownSymbol sym, IsSelect n ss) => IsSelect (S n) ( '(tbl, sym, ty) ': ss) where
+    select _ = column :+> (select (Proxy :: Proxy ss))

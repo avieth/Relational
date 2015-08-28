@@ -37,6 +37,8 @@ module Data.Relational.Database (
   , ContainsTable
   , ContainsSchemaTypes
 
+  , DatabaseTypes
+
   ) where
 
 import GHC.TypeLits (Symbol)
@@ -97,3 +99,5 @@ type family ContainsTable (dbContainer :: [(Symbol, [(Symbol, *)])]) (table :: (
 type family ContainsSchemaTypes (dbContainer :: [(Symbol, [(Symbol, *)])]) (schema :: [(Symbol, *)]) :: Constraint where
     ContainsSchemaTypes db '[] = ()
     ContainsSchemaTypes db ( '(sym, t) ': rest ) = (Elem t (Snds (Concat (Snds db))), ContainsSchemaTypes db rest)
+
+type DatabaseTypes (db :: [(Symbol, [(Symbol, *)])]) = Snds (Concat (Snds db))

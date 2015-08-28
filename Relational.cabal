@@ -42,6 +42,7 @@ library
                      , Data.Relational.Delete
                      , Data.Relational.Update
                      , Data.Relational.Relation
+                     , Data.Relational.Universe
 
   -- other-modules:       
   other-extensions:    AutoDeriveTypeable
@@ -63,6 +64,9 @@ library
                      , RankNTypes
 
   build-depends:       base >=4.7 && <4.8
+                     , TypeNat >= 0.4 && < 0.5
+                     , transformers >= 0.3
+                     , void
 
   -- hs-source-dirs:      
   default-language:    Haskell2010
