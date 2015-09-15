@@ -32,6 +32,9 @@ module Data.Relational.Row (
   , rowToHListProof
   , rowHList
 
+  , RowField
+  , rowField
+
   {-
   , RestoreRowField(..)
   , SwapRowFields(..)
@@ -44,6 +47,7 @@ import GHC.TypeLits
 import Data.Proxy
 import Data.Relational.HasConstraint
 import Data.Relational.Types
+import Data.Relational.Column
 import Data.Relational.Field
 import Data.Relational.Schema
 import Unsafe.Coerce
@@ -87,6 +91,17 @@ rowToHListProof row = case row of
 rowHList :: Row ts -> HList (Snds ts)
 rowHList row = case rowToHListProof row of
     HasConstraint -> rowToHList row
+
+class RowField col row where
+    rowField :: Proxy col -> Row row -> ColumnType col
+
+instance {-# OVERLAPS #-} RowField x ( x ': rest ) where
+    rowField _ row = case row of
+        ConsRow field _ -> fieldValue field
+
+instance {-# OVERLAPS #-} RowField x rest => RowField x ( y ': rest ) where
+    rowField proxy row = case row of
+        ConsRow _ rest -> rowField proxy rest
 
 {-
 class RestoreRowField (t :: (Symbol, *)) (ts :: [(Symbol, *)]) (ss :: [(Symbol, *)]) where
