@@ -13,12 +13,17 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Data.Relational.Column (
 
     Column(..)
   , column
   , columnName
+
+  , ColumnType
+  , ColumnName
 
   ) where
 
@@ -48,3 +53,9 @@ column = Column Proxy Proxy
 -- | The name of a column.
 columnName :: Column '(sym, t) -> String
 columnName (Column symbol _) = symbolVal symbol
+
+type family ColumnType (col :: (Symbol, *)) :: * where
+    ColumnType '(sym, t) = t
+
+type family ColumnName (col :: (Symbol, *)) :: Symbol where
+    ColumnName '(sym, t) = sym
