@@ -13,8 +13,8 @@ Portability : non-portable (GHC only)
 module Data.Relational.Limit (
 
       Limit(..)
-    , noLimit
     , limit
+    , noLimit
 
     ) where
 
