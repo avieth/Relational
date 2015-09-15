@@ -43,6 +43,8 @@ library
                      , Data.Relational.Update
                      , Data.Relational.Relation
                      , Data.Relational.Universe
+                     , Data.Relational.Limit
+                     , Data.Relational.Offset
 
   -- other-modules:       
   other-extensions:    AutoDeriveTypeable

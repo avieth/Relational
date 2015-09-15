@@ -28,6 +28,8 @@ module Data.Relational (
   , module Data.Relational.Update
   , module Data.Relational.Relation
   , module Data.Relational.Universe
+  , module Data.Relational.Limit
+  , module Data.Relational.Offset
 
   ) where
 
@@ -49,3 +51,5 @@ import Data.Relational.Delete
 import Data.Relational.Update
 import Data.Relational.Relation
 import Data.Relational.Universe
+import Data.Relational.Limit
+import Data.Relational.Offset
