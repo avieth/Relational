@@ -2,7 +2,7 @@ Relational
 ==========
 
 Relational allows the Haskell programmer to work with columns, schemas,
-projections, and conditions to compose datatypes representing relations
+projections, conditions, and others to compose datatypes representing relations
 (selections, intersections, unions), insertions, updates, and deletions.
 It's the terminology of SQL and relational databases, embedded in Haskell at
 term *and* type level.
@@ -86,3 +86,11 @@ messageInsertion sender receiver time messageBody = insert row
 ```
 
 See the rest of this example in [Message.hs](Examples/Message.hs).
+
+## TODO
+
+Some pending tasks just off the top of my head:
+
+  1. Replace the ad-hoc constraint magic (`HasConstraint`, `EveryConstraint`, etc.)
+     with definitions from the `constraints` package, which I was unaware of
+     at the time of writing.
