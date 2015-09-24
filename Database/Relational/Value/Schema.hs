@@ -34,6 +34,7 @@ import Database.Relational.Universe
 import Database.Relational.Schema
 import Database.Relational.Value.Columns
 import Database.Relational.Value.PrimaryKey
+import Database.Relational.Value.ForeignKeys
 
 -- | Bundles all values describing a schema in a given universe. It's a
 --   value-level counterpart of a schema type.
@@ -45,7 +46,7 @@ data SchemaD database universe schema where
         => Proxy schema
         -> ColumnsD database universe (SchemaColumns schema)
         -> PrimaryKeyD database universe schema (SchemaPrimaryKey schema)
-        -- -> ForeignKeyData universe
+        -> ForeignKeysD database universe schema (SchemaForeignKeys schema)
         -- -> UniqueData universe
         -- -> NotNullData universe
         -- -> CheckData universe
@@ -68,11 +69,14 @@ instance
     , SafeDatabase database universe
     , ColumnsValue database universe (SchemaColumns schema)
     , PrimaryKeyValue database universe schema (SchemaPrimaryKey schema)
+    , ForeignKeysValue database universe schema (SchemaForeignKeys schema)
     ) => SchemaValue database universe schema
   where
-    schemaD proxyDB proxyU proxySchema = SchemaD proxySchema columns primaryKey
+    schemaD proxyDB proxyU proxySchema = SchemaD proxySchema columns primaryKey foreignKeys
       where
         columns :: ColumnsD database universe (SchemaColumns schema)
         columns = columnsD proxyDB proxyU (Proxy :: Proxy (SchemaColumns schema))
         primaryKey :: PrimaryKeyD database universe schema (SchemaPrimaryKey schema)
         primaryKey = primaryKeyD proxyDB proxyU proxySchema (Proxy :: Proxy (SchemaPrimaryKey schema))
+        foreignKeys :: ForeignKeysD database universe schema (SchemaForeignKeys schema)
+        foreignKeys = foreignKeysD proxyDB proxyU proxySchema (Proxy :: Proxy (SchemaForeignKeys schema))

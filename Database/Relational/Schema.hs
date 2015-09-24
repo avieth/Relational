@@ -30,6 +30,10 @@ module Database.Relational.Schema (
     , WellFormedSchema
     , WellFormedPrimaryKey
     , WellFormedForeignKeys
+    , ForeignKeyForeignTableName
+    , ForeignKeyReferences
+    , ForeignKeyReferenceLocal
+    , ForeignKeyReferenceForeign
 
     ) where
 
@@ -81,10 +85,16 @@ type family SchemaCheck schema where
 type family SchemaDefault schema where
     SchemaDefault '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) = deflt
 
+type family ForeignKeyReferenceLocal (ref :: (Symbol, Symbol)) :: Symbol where
+    ForeignKeyReferenceLocal '(local, freign) = local
+
+type family ForeignKeyReferenceForeign (ref :: (Symbol, Symbol)) :: Symbol where
+    ForeignKeyReferenceForeign '(local, freign) = freign
+
 type family ForeignKeyForeignTableName foreignKey where
     ForeignKeyForeignTableName '(refs, name) = name
 
-type family ForeignKeyReferences foreignKey where
+type family ForeignKeyReferences (foreignKey :: ([(Symbol, Symbol)], Symbol)) :: [(Symbol, Symbol)] where
     ForeignKeyReferences '(references, name) = references
 
 type family ForeignKeyLocalNames foreignKey :: [Symbol] where
@@ -130,7 +140,7 @@ type family WellFormedSchema name schema database :: Constraint where
     WellFormedSchema name schema database = (
           Unique (ColumnNames (SchemaColumns schema)) ~ 'True
         , WellFormedPrimaryKey (SchemaPrimaryKey schema) schema
-        , WellFormedForeignKeys (SchemaForeignKeys schema) (SchemaColumns schema) name database
+        , WellFormedForeignKeys (SchemaForeignKeys schema) schema name database
         , WellFormedUnique (SchemaUnique schema) schema
         , WellFormedNotNull (SchemaNotNull schema) schema
         --, WellFormedCheck check columns
@@ -160,11 +170,11 @@ type family WellFormedPrimaryKey primaryKey schema :: Constraint where
 -- their schemas have the appropriate names, types, and constraints.
 -- For instance, must eliminate making a foreign key on any non-unique
 -- column, or any column of a different type!
-type family WellFormedForeignKeys foreignKeys columns name database :: Constraint where
-    WellFormedForeignKeys '[] columns name database = ()
-    WellFormedForeignKeys (f ': fs) columns name database = (
-          WellFormedForeignKey f columns name database
-        , WellFormedForeignKeys fs columns name database
+type family WellFormedForeignKeys foreignKeys schema name database :: Constraint where
+    WellFormedForeignKeys '[] schema name database = ()
+    WellFormedForeignKeys (f ': fs) schema name database = (
+          WellFormedForeignKey f (SchemaColumns schema) name database
+        , WellFormedForeignKeys fs schema name database
         )
 
 type family WellFormedForeignKey foreignKey columns name database :: Constraint where
