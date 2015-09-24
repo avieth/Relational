@@ -28,6 +28,8 @@ module Database.Relational.Schema (
     , SchemaCheck
     , SchemaDefault
     , WellFormedSchema
+    , WellFormedPrimaryKey
+    , WellFormedForeignKeys
 
     ) where
 
@@ -125,12 +127,12 @@ type family IsNotNull columnName schema :: Bool where
 -- schema itself, and the database in which it lives. This is to be able to
 -- resolve foreign key well-formedness.
 type family WellFormedSchema name schema database :: Constraint where
-    WellFormedSchema name '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) database = (
-          Unique (ColumnNames columns) ~ 'True
-        , WellFormedPrimaryKey primaryKey columns
-        , WellFormedForeignKeys foreignKeys columns name database
-        , WellFormedUnique unique columns
-        , WellFormedNotNull notNull columns
+    WellFormedSchema name schema database = (
+          Unique (ColumnNames (SchemaColumns schema)) ~ 'True
+        , WellFormedPrimaryKey (SchemaPrimaryKey schema) schema
+        , WellFormedForeignKeys (SchemaForeignKeys schema) (SchemaColumns schema) name database
+        , WellFormedUnique (SchemaUnique schema) schema
+        , WellFormedNotNull (SchemaNotNull schema) schema
         --, WellFormedCheck check columns
         --, WellFormedDefault deflt columns
         )
@@ -147,10 +149,10 @@ type family LookupColumn (name :: Symbol) (columns :: [(Symbol, *)]) :: (Symbol,
 
 -- Must check that the primary key column names are unique, and that they
 -- indeed correspond to column names in the schema.
-type family WellFormedPrimaryKey primaryKey columns :: Constraint where
-    WellFormedPrimaryKey names columns = (
+type family WellFormedPrimaryKey primaryKey schema :: Constraint where
+    WellFormedPrimaryKey names schema = (
           Unique names ~ 'True
-        , Subset names (ColumnNames columns) ~ 'True
+        , Subset names (ColumnNames (SchemaColumns schema)) ~ 'True
         )
 
 -- Must check that all of the foreign table names do not match this table's
@@ -179,14 +181,14 @@ type family WellFormedForeignKey foreignKey columns name database :: Constraint 
         , ForeignKeyLocalTypes foreignKey columns ~ ForeignKeyForeignTypes foreignKey (ForeignKeyForeignColumns foreignKey database)
         )
 
-type family WellFormedUnique unique columns :: Constraint where
-    WellFormedUnique unique columns = (
+type family WellFormedUnique unique schema :: Constraint where
+    WellFormedUnique unique schema = (
           Unique unique ~ 'True
-        , Subset unique (ColumnNames columns) ~ 'True
+        , Subset unique (ColumnNames (SchemaColumns schema)) ~ 'True
         )
 
-type family WellFormedNotNull notNull columns :: Constraint where
-    WellFormedNotNull notNull columns = (
+type family WellFormedNotNull notNull schema :: Constraint where
+    WellFormedNotNull notNull schema = (
           Unique notNull ~ 'True
-        , Subset notNull (ColumnNames columns) ~ 'True
+        , Subset notNull (ColumnNames (SchemaColumns schema)) ~ 'True
         )
