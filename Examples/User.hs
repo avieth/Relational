@@ -19,10 +19,13 @@ It's deliberately not normalized, to show the use of a foreign key.
 
 module Examples.User where
 
+import Data.Proxy
 import Database.Relational.Database
 import Database.Relational.Table
 import Database.Relational.Schema
 import Database.Relational.ForeignKeyCycles
+import Database.Relational.Value.Database
+import Examples.PostgresUniverse
 
 type UserTable = Table "users" UserSchema
 type UserSchema
@@ -34,7 +37,7 @@ type UserSchema
       UserNotNull
       UserCheck
       UserDeflt
-type UserColumns = '[ '("uuid", Integer) ]
+type UserColumns = '[ '("uuid", PGUUID) ]
 type UserPrimaryKey = '["uuid"]
 type UserForeignKey = '[]
 -- This foreign key induces a cycle and is caught by our type program!!
@@ -54,7 +57,7 @@ type UsernameSchema
       UsernameNotNull
       UsernameCheck
       UsernameDeflt
-type UsernameColumns = '[ '("uuid", Integer), '("username", String) ]
+type UsernameColumns = '[ '("uuid", PGUUID), '("username", PGText) ]
 type UsernamePrimaryKey = '["uuid"]
 type UsernameForeignKey = '[ '( '[ '("uuid", "uuid") ], "users") ]
 type UsernameUnique = '["uuid", "username"]
@@ -69,3 +72,6 @@ wellFormed = undefined
 
 noCycles :: ForeignKeyCycles UserDatabase ~ '[] => a
 noCycles = undefined
+
+dbvalue :: DatabaseD UserDatabase PostgresUniverse (DatabaseTables UserDatabase)
+dbvalue = databaseD Proxy Proxy Proxy
