@@ -24,27 +24,20 @@ library
 
   ghc-options:       
 
-  exposed-modules:     Data.Relational
-                     , Data.Relational.HasConstraint
-                     , Data.Relational.TypeList
-                     , Data.Relational.Types
-                     , Data.Relational.Contains
-                     , Data.Relational.Condition
-                     , Data.Relational.Project
-                     , Data.Relational.Schema
-                     , Data.Relational.Field
-                     , Data.Relational.Column
-                     , Data.Relational.Row
-                     , Data.Relational.Table
-                     , Data.Relational.Database
-                     , Data.Relational.Select
-                     , Data.Relational.Insert
-                     , Data.Relational.Delete
-                     , Data.Relational.Update
-                     , Data.Relational.Relation
-                     , Data.Relational.Universe
-                     , Data.Relational.Limit
-                     , Data.Relational.Offset
+  exposed-modules:     Database.Relational.Column
+                     , Database.Relational.Database
+                     , Database.Relational.ForeignKeyCycles
+                     , Database.Relational.Safe
+                     , Database.Relational.Schema
+                     , Database.Relational.Table
+                     , Database.Relational.Universe
+                     , Types.Append
+                     , Types.BooleanLogic
+                     , Types.Equal
+                     , Types.Every
+                     , Types.Member
+                     , Types.Subset
+                     , Types.Unique
 
   -- other-modules:       
   other-extensions:    AutoDeriveTypeable
@@ -66,9 +59,6 @@ library
                      , RankNTypes
 
   build-depends:       base >=4.7 && <4.9
-                     , TypeNat >= 0.4 && < 0.6
-                     , transformers >= 0.3
-                     , void
 
   -- hs-source-dirs:      
   default-language:    Haskell2010
