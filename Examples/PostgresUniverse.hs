@@ -46,7 +46,9 @@ import Database.Relational.Value.PrimaryKey
 import Database.Relational.Value.ForeignKeys
 import Database.Relational.Insert
 import Database.Relational.Delete
+import Database.Relational.Value
 import Database.Relational.Values
+import Database.Relational.Restriction
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
@@ -409,7 +411,6 @@ instance
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
     , KnownSymbol (TableName table)
-    --, PGMakeQueryString (DELETE_FROM (TABLE table))
     ) => RunPostgres database (DELETE_FROM (TABLE table))
   where
     type PostgresCodomain database (DELETE_FROM (TABLE table)) = ReaderT Connection IO ()
@@ -420,6 +421,27 @@ instance
             lift $ execute_ connection query
             return ()
 
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , DatabaseHasTable database table
+    , PGMakeQueryString (DELETE_FROM (TABLE table))
+    , PGMakeRestriction condition
+    , ToRow (PGMakeRestrictionValue condition)
+    ) => RunPostgres database (WHERE (DELETE_FROM (TABLE table)) condition)
+  where
+    type PostgresCodomain database (WHERE (DELETE_FROM (TABLE table)) condition) = ReaderT Connection IO ()
+    runPostgres proxyDB term = case term of
+        WHERE delete condition -> do
+            let queryString = pgQueryString delete
+            let (conditionString, values) = pgRestriction condition
+            connection <- ask
+            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) values
+            return ()
+
+-- This class is useful for composing queries, for instance when we encounter
+-- a WHERE clause and we just want to get the query string of the thing to
+-- be restricted.
 class
     (
     ) => PGMakeQueryString term
@@ -435,3 +457,105 @@ instance
               "DELETE FROM "
             , symbolVal (Proxy :: Proxy (TableName table))
             ]
+
+class
+    (
+    ) => PGMakeRestriction term
+  where
+    type PGMakeRestrictionValue term :: *
+    pgRestriction :: term -> (String, PGMakeRestrictionValue term)
+
+instance
+    ( PostgresUniverseConstraint ty
+    ) => PGMakeRestriction (VALUE ty)
+  where
+    type PGMakeRestrictionValue (VALUE ty) = Only ty
+    pgRestriction (VALUE x) = ("?", Only x)
+
+instance
+    ( PostgresUniverseConstraint ty
+    , KnownSymbol columnName
+    , KnownSymbol tableName
+    ) => PGMakeRestriction (COLUMN tableName '(columnName, ty))
+  where
+    type PGMakeRestrictionValue (COLUMN tableName '(columnName, ty)) = ()
+    pgRestriction _ = (queryString, value)
+      where
+        queryString = concat [
+              symbolVal (Proxy :: Proxy tableName)
+            , "."
+            , symbolVal (Proxy :: Proxy columnName)
+            ]
+        value = ()
+
+instance
+    ( PGMakeRestriction left
+    , PGMakeRestriction right
+    ) => PGMakeRestriction (AND left right)
+  where
+    type PGMakeRestrictionValue (AND left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
+    pgRestriction (AND left right) = (queryString, value)
+      where
+        (queryStringLeft, valueLeft) = pgRestriction left
+        (queryStringRight, valueRight) = pgRestriction right
+        queryString = concat [
+              "("
+            , queryStringLeft
+            , ") AND ("
+            , queryStringRight
+            , ")"
+            ]
+        value = valueLeft :. valueRight
+
+instance
+    ( PGMakeRestriction left
+    , PGMakeRestriction right
+    ) => PGMakeRestriction (OR left right)
+  where
+    type PGMakeRestrictionValue (OR left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
+    pgRestriction (OR left right) = (queryString, value)
+      where
+        (queryStringLeft, valueLeft) = pgRestriction left
+        (queryStringRight, valueRight) = pgRestriction right
+        queryString = concat [
+              "("
+            , queryStringLeft
+            , ") OR ("
+            , queryStringRight
+            , ")"
+            ]
+        value = valueLeft :. valueRight
+
+instance
+    ( PGMakeRestriction term
+    ) => PGMakeRestriction (NOT term)
+  where
+    type PGMakeRestrictionValue (NOT term) = PGMakeRestrictionValue term
+    pgRestriction (NOT term) = (queryString, value)
+      where
+        (subQueryString, subValue) = pgRestriction term
+        queryString = concat [
+              "NOT ("
+            , subQueryString
+            , ")"
+            ]
+        value = subValue
+
+instance
+    ( PGMakeRestriction left
+    , PGMakeRestriction right
+    ) => PGMakeRestriction (EQUAL left right)
+  where
+    type PGMakeRestrictionValue (EQUAL left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
+    pgRestriction (EQUAL left right) = (queryString, value)
+      where
+        (queryStringLeft, valueLeft) = pgRestriction left
+        (queryStringRight, valueRight) = pgRestriction right
+        queryString = concat [
+              "("
+            , queryStringLeft
+            , ") = ("
+            , queryStringRight
+            , ")"
+            ]
+        value = valueLeft :. valueRight

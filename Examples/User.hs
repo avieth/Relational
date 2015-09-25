@@ -25,13 +25,17 @@ import Data.Proxy
 import Database.Relational.Database
 import Database.Relational.Table
 import Database.Relational.Schema
+import Database.Relational.Column
 import Database.Relational.ForeignKeyCycles
 import Database.Relational.Value.Database
 import Database.Relational.Insert
 import Database.Relational.Delete
 import Database.Relational.Values
+import Database.Relational.Value
+import Database.Relational.Restriction
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
+import Data.UUID
 import Data.UUID.V4 (nextRandom)
 
 type UserTable = Table "users" UserSchema
@@ -86,6 +90,9 @@ dbvalue = databaseD Proxy Proxy Proxy
 userTable :: Proxy UserTable
 userTable = Proxy
 
+uuidColumn :: Proxy '("uuid", PGUUID)
+uuidColumn = Proxy
+
 userDatabase :: Proxy UserDatabase
 userDatabase = Proxy
 
@@ -96,9 +103,13 @@ insertThree = do
     u3 <- lift nextRandom
     let insertion = INSERT_INTO (TABLE userTable) (VALUES [PGUUID u1, PGUUID u2, PGUUID u3])
     runPostgres userDatabase insertion
-    --pginsert userDatabase userTable [(PGUUID u3)]
 
 deleteAll :: ReaderT Connection IO ()
 deleteAll = do
     let deletion = DELETE_FROM (TABLE userTable) -- `WHERE` (COLUMN UUIDColumn .==. uuid)
+    runPostgres userDatabase deletion
+
+deleteUuid :: UUID -> ReaderT Connection IO ()
+deleteUuid uuid = do
+    let deletion = DELETE_FROM (TABLE userTable) `WHERE` ((COLUMN (Proxy :: Proxy (TableName UserTable)) uuidColumn) .==. (VALUE (PGUUID uuid)))
     runPostgres userDatabase deletion

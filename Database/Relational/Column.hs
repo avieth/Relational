@@ -13,20 +13,27 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GADTs #-}
 
 module Database.Relational.Column (
 
       Column
+    , COLUMN(..)
     , ColumnName
     , ColumnType
 
     ) where
 
 import GHC.TypeLits (Symbol)
+import Data.Proxy
 
 -- A column is determined by a name and its type.
 
 type Column (name :: Symbol) (t :: *) = '(name, t)
+
+-- A column qualified by a table name.
+data COLUMN tableName column where
+    COLUMN :: Proxy tableName -> Proxy column -> COLUMN tableName column
 
 type family ColumnName (column :: (Symbol, *)) :: Symbol where
     ColumnName '(name, t) = name
