@@ -19,6 +19,8 @@ It's deliberately not normalized, to show the use of a foreign key.
 
 module Examples.User where
 
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Reader
 import Data.Proxy
 import Database.Relational.Database
 import Database.Relational.Table
@@ -26,6 +28,8 @@ import Database.Relational.Schema
 import Database.Relational.ForeignKeyCycles
 import Database.Relational.Value.Database
 import Examples.PostgresUniverse
+import Database.PostgreSQL.Simple
+import Data.UUID.V4 (nextRandom)
 
 type UserTable = Table "users" UserSchema
 type UserSchema
@@ -75,3 +79,18 @@ noCycles = undefined
 
 dbvalue :: DatabaseD UserDatabase PostgresUniverse (DatabaseTables UserDatabase)
 dbvalue = databaseD Proxy Proxy Proxy
+
+userTable :: Proxy UserTable
+userTable = Proxy
+
+userDatabase :: Proxy UserDatabase
+userDatabase = Proxy
+
+insertThree :: ReaderT Connection IO ()
+insertThree = do
+    u1 <- lift nextRandom
+    u2 <- lift nextRandom
+    u3 <- lift nextRandom
+    pginsert userDatabase userTable [(PGUUID u3)]
+
+

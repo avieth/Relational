@@ -11,6 +11,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE AutoDeriveTypeable #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -23,12 +24,15 @@ Portability : non-portable (GHC only)
 
 module Examples.PostgresUniverse where
 
-import GHC.TypeLits (KnownSymbol, symbolVal)
+import GHC.TypeLits (Symbol, KnownSymbol, symbolVal)
+import Control.Monad (forM_)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
+import Data.Constraint
 import Data.Proxy
 import Data.String (fromString)
 import Data.List (intersperse)
+import Database.Relational.Safe
 import Database.Relational.Universe
 import Database.Relational.Database
 import Database.Relational.Table
@@ -40,6 +44,7 @@ import Database.Relational.Value.Schema
 import Database.Relational.Value.Columns
 import Database.Relational.Value.PrimaryKey
 import Database.Relational.Value.ForeignKeys
+import Database.Relational.Insert
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
@@ -49,7 +54,13 @@ import Data.Int
 
 data PostgresUniverse
 
-class (ToField t, FromField t) => PostgresUniverseConstraint t where
+class
+    ( --ToField (Maybe t)
+    --, FromField (Maybe t)
+      ToField t
+    , FromField t
+    ) => PostgresUniverseConstraint t
+  where
     postgresUniverseTypeId :: Proxy t -> String
 
 newtype PGText = PGText T.Text
@@ -261,4 +272,98 @@ foreignKeyReferenceColumnsStrings foreignKeyReferenced = case foreignKeyReferenc
     ForeignKeyReferencesDCons (proxy :: Proxy ref) rest ->
           (symbolVal (Proxy :: Proxy (ForeignKeyReferenceLocal ref)), symbolVal (Proxy :: Proxy (ForeignKeyReferenceForeign ref)))
         : (foreignKeyReferenceColumnsStrings rest)
-    
+
+-- These are used as constraints in PGInsertLiteralRow instances to get a hold
+-- of a ToField constraint on whatever the literal row field type is: either
+-- ty or Maybe ty, depending on isOptional.
+class ( ToField (InsertLiteralRowsFieldType column isOptional) ) => PGInsertLiteralFieldConstraint column isOptional
+instance PostgresUniverseConstraint ty => PGInsertLiteralFieldConstraint '(name, ty) True
+instance PostgresUniverseConstraint ty => PGInsertLiteralFieldConstraint '(name, ty) False
+
+-- Parts of the insertion process depend upon the columns and schema:
+--   how many ?s to place and
+--   the type of the thing to call execute with, which postgresql-simple needs
+--     to know concretely.
+class PGInsertLiteralRow database table columns where
+    pgInsertLiteralRow
+        :: Proxy database
+        -> Proxy table
+        -> Proxy columns
+        -> InsertLiteralRowsType database (TableSchema table) columns
+        -> ReaderT Connection IO ()
+
+commonInsertPrefix
+    :: forall table .
+       ( KnownSymbol (TableName table) )
+    => Proxy table
+    -> String
+commonInsertPrefix _ = concat [
+      "INSERT INTO "
+    , symbolVal (Proxy :: Proxy (TableName table))
+    , " VALUES "
+    ]
+
+instance
+    ( KnownSymbol (TableName table)
+    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    ) => PGInsertLiteralRow database table '[ c1 ]
+  where
+    pgInsertLiteralRow _ proxyTable _ term = case term of
+        value -> do connection <- ask
+                    let statement = concat [commonInsertPrefix proxyTable, "(?)"]
+                    lift $ execute connection (fromString statement) (Only value)
+                    return ()
+
+instance
+    ( KnownSymbol (TableName table)
+    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    ) => PGInsertLiteralRow database table '[ c1, c2 ]
+  where
+    pgInsertLiteralRow _ proxyTable _ term = case term of
+        values -> do connection <- ask
+                     let statement = concat [commonInsertPrefix proxyTable, "(?,?)"]
+                     lift $ execute connection (fromString statement) values
+                     return ()
+
+instance
+    ( KnownSymbol (TableName table)
+    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGInsertLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
+    ) => PGInsertLiteralRow database table '[ c1, c2, c3 ]
+  where
+    pgInsertLiteralRow _ proxyTable _ term = case term of
+        values -> do connection <- ask
+                     let statement = concat [commonInsertPrefix proxyTable, "(?,?,?)"]
+                     lift $ execute connection (fromString statement) values
+                     return ()
+
+instance
+    ( KnownSymbol (TableName table)
+    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGInsertLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
+    , PGInsertLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
+    ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4 ]
+  where
+    pgInsertLiteralRow _ proxyTable _ term = case term of
+        values -> do connection <- ask
+                     let statement = concat [commonInsertPrefix proxyTable, "(?,?,?,?)"]
+                     lift $ execute connection (fromString statement) values
+                     return ()
+
+pginsert
+    :: forall database table .
+       ( WellFormedDatabase database
+       , SafeDatabase database PostgresUniverse
+       , PGInsertLiteralRow database table (SchemaColumns (TableSchema table))
+       )
+    => Proxy database
+    -> Proxy table
+    -> [InsertLiteralRowsType database (TableSchema table) (SchemaColumns (TableSchema table))]
+    -> ReaderT Connection IO ()
+pginsert proxyDB proxyTable rows = forM_ rows (pgInsertLiteralRow proxyDB proxyTable proxyColumns)
+  where
+    proxyColumns :: Proxy (SchemaColumns (TableSchema table))
+    proxyColumns = Proxy
