@@ -54,7 +54,7 @@ data DatabaseD database universe tables where
         :: ( RelationalUniverse universe
            , SafeDatabase database universe
            , KnownSymbol (DatabaseName database)
-            , DatabaseContainsTable database table
+            , DatabaseHasTable database table
            )
         => TableD database universe table
         -> DatabaseD database universe tables
@@ -83,7 +83,7 @@ instance
     ( RelationalUniverse universe
     , SafeDatabase database universe
     , KnownSymbol (DatabaseName database)
-    , DatabaseContainsTable database table
+    , DatabaseHasTable database table
     , TableValue database universe table
     , DatabaseValue database universe tables
     ) => DatabaseValue database universe (table ': tables)

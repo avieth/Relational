@@ -56,7 +56,7 @@ data TableD database universe table where
 class
     ( RelationalUniverse universe
     , SafeDatabase database universe
-    , DatabaseContainsTable database table
+    , DatabaseHasTable database table
     ) => TableValue database universe table
   where
     tableD
@@ -68,7 +68,7 @@ class
 instance
     ( RelationalUniverse universe
     , SafeDatabase database universe
-    , DatabaseContainsTable database table
+    , DatabaseHasTable database table
     , KnownSymbol (TableName table)
     , SchemaValue database universe (TableSchema table)
     ) => TableValue database universe table

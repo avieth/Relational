@@ -26,7 +26,7 @@ module Database.Relational.Database (
     , TableNames
     , WellFormedTables
 
-    , DatabaseContainsTable
+    , DatabaseHasTable
     , LookupTable
     , LookupSchema
 
@@ -63,7 +63,7 @@ type family WellFormedTables tables database :: Constraint where
     WellFormedTables '[] database = ()
     WellFormedTables (t ': ts) database = (WellFormedTable t database, WellFormedTables ts database)
 
-type DatabaseContainsTable database table = Member table (DatabaseTables database) ~ 'True
+type DatabaseHasTable database table = Member table (DatabaseTables database) ~ 'True
 
 type family LookupTable name tables where
     LookupTable name ( '(name, schema) ': rest ) = '(name, schema)

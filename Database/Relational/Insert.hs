@@ -18,7 +18,9 @@ Portability : non-portable (GHC only)
 
 module Database.Relational.Insert (
 
-      InsertLiteralRowsType
+      INSERT_INTO(..)
+
+    , InsertLiteralRowsType
     , InsertLiteralRowsFieldType
 
     ) where
@@ -30,6 +32,8 @@ import Database.Relational.Database
 import Database.Relational.Table
 import Database.Relational.Schema
 import Database.Relational.Column
+
+data INSERT_INTO table rows = INSERT_INTO table rows
 
 -- The type of thing you must give to insert into a table of course
 -- depends upon the schema of the table. Here we describe it.

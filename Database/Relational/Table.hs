@@ -14,10 +14,12 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE GADTs #-}
 
 module Database.Relational.Table (
 
       Table
+    , TABLE(..)
     , TableName
     , TableSchema
     , WellFormedTable
@@ -26,10 +28,14 @@ module Database.Relational.Table (
 
 import GHC.TypeLits (Symbol)
 import GHC.Exts (Constraint)
+import Data.Proxy
 import Database.Relational.Schema
 
 -- A table is a named schema.
 type Table (name :: Symbol) schema = '(name, schema)
+
+data TABLE table where
+    TABLE :: Proxy table -> TABLE table
 
 type family TableName table :: Symbol where
     TableName '(name, schema) = name

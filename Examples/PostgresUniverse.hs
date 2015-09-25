@@ -45,6 +45,7 @@ import Database.Relational.Value.Columns
 import Database.Relational.Value.PrimaryKey
 import Database.Relational.Value.ForeignKeys
 import Database.Relational.Insert
+import Database.Relational.Values
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
@@ -367,3 +368,38 @@ pginsert proxyDB proxyTable rows = forM_ rows (pgInsertLiteralRow proxyDB proxyT
   where
     proxyColumns :: Proxy (SchemaColumns (TableSchema table))
     proxyColumns = Proxy
+
+
+--
+--
+-- The new design: heavily typeclass based.
+--
+--
+
+class
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    ) => RunPostgres database term
+  where
+    type PostgresCodomain database term :: *
+    runPostgres :: Proxy database -> term -> PostgresCodomain database term
+
+-- We know how to insert values into a table.
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , DatabaseHasTable database table
+    , KnownSymbol (TableName table)
+    , PGInsertLiteralRow database table (SchemaColumns (TableSchema table))
+    , values ~ [InsertLiteralRowsType database (TableSchema table) (SchemaColumns (TableSchema table))]
+    ) => RunPostgres database (INSERT_INTO (TABLE table) (VALUES values))
+  where
+    type PostgresCodomain database (INSERT_INTO (TABLE table) (VALUES values)) = ReaderT Connection IO ()
+    runPostgres proxyDB term = case term of
+        INSERT_INTO (TABLE proxyTable) (VALUES values) ->
+            forM_ values (pgInsertLiteralRow proxyDB proxyTable proxyColumns)
+      where
+        proxyColumns :: Proxy (SchemaColumns (TableSchema table))
+        proxyColumns = Proxy
+
+-- 

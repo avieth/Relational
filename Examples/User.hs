@@ -27,6 +27,8 @@ import Database.Relational.Table
 import Database.Relational.Schema
 import Database.Relational.ForeignKeyCycles
 import Database.Relational.Value.Database
+import Database.Relational.Insert
+import Database.Relational.Values
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
 import Data.UUID.V4 (nextRandom)
@@ -91,6 +93,8 @@ insertThree = do
     u1 <- lift nextRandom
     u2 <- lift nextRandom
     u3 <- lift nextRandom
-    pginsert userDatabase userTable [(PGUUID u3)]
+    let insertion = INSERT_INTO (TABLE userTable) (VALUES [PGUUID u1, PGUUID u2, PGUUID u3])
+    runPostgres userDatabase insertion
+    --pginsert userDatabase userTable [(PGUUID u3)]
 
 
