@@ -32,7 +32,7 @@ import Data.Proxy
 type Column (name :: Symbol) (t :: *) = '(name, t)
 
 -- A column qualified by a table name.
-data COLUMN tableName column where
+data COLUMN (tableName :: Symbol) (column :: (Symbol, *)) where
     COLUMN :: Proxy tableName -> Proxy column -> COLUMN tableName column
 
 type family ColumnName (column :: (Symbol, *)) :: Symbol where

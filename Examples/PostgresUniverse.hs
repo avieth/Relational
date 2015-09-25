@@ -52,9 +52,10 @@ import Database.Relational.Insert
 import Database.Relational.Delete
 import Database.Relational.Update
 import Database.Relational.Project
+import Database.Relational.Sub
 import Database.Relational.Value
 import Database.Relational.Values
-import Database.Relational.Restriction
+import Database.Relational.Restrict
 import Database.Relational.From
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
@@ -485,6 +486,29 @@ instance
         rows <- lift $ query connection queryString ()
         return (fmap pgRowOut rows)
 
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , DatabaseHasTable database table
+    , PGMakeQueryString (SELECT project (FROM (TABLE table)))
+    , Subset (ProjectColumns project) (SchemaColumns (TableSchema table)) ~ 'True
+    , Subset (ProjectTableNames project) '[TableName table] ~ 'True
+    , PGRow (LiteralRowType database (TableSchema table) (ProjectColumns project))
+    , FromRow (PGRowType (LiteralRowType database (TableSchema table) (ProjectColumns project)))
+    , PGMakeRestriction condition
+    , ToRow (PGMakeRestrictionValue condition)
+    -- TODO
+    -- Must guarantee that the condition references only columns in the table.
+    ) => RunPostgres database (WHERE (SELECT project (FROM (TABLE table))) condition)
+  where
+    type PostgresCodomain database (WHERE (SELECT project (FROM (TABLE table))) condition) = ReaderT Connection IO [LiteralRowType database (TableSchema table) (ProjectColumns project)]
+    runPostgres proxyDB term = case term of
+        WHERE selectTerm condition -> do
+            let queryString = pgQueryString selectTerm
+            let (conditionString, parameters) = pgRestriction condition
+            connection <- ask
+            rows <- lift $ query connection (fromString (concat [queryString, " WHERE ", conditionString])) parameters
+            return (fmap pgRowOut rows)
 
 -- We know how to insert values into a table.
 instance
@@ -547,19 +571,19 @@ instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (UPDATE (TABLE table) project row)
+    , PGMakeQueryString (UPDATE (TABLE table) sub row)
     -- We guarantee that we're updating a subset of the schema columns ...
-    , Subset (ProjectColumns project) (SchemaColumns (TableSchema table)) ~ 'True
+    , Subset (SubColumns sub) (SchemaColumns (TableSchema table)) ~ 'True
     -- ... and also that the values we give to fill them in are of the right
     -- type.
-    , row ~ LiteralRowType database (TableSchema table) (ProjectColumns project)
+    , row ~ LiteralRowType database (TableSchema table) (SubColumns sub)
     , PGRow row
     , ToRow (PGRowType row)
-    ) => RunPostgres database (UPDATE (TABLE table) project row)
+    ) => RunPostgres database (UPDATE (TABLE table) sub row)
   where
-    type PostgresCodomain database (UPDATE (TABLE table) project row) = ReaderT Connection IO ()
+    type PostgresCodomain database (UPDATE (TABLE table) sub row) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
-        UPDATE (TABLE proxyTable) project row -> do
+        UPDATE (TABLE proxyTable) sub row -> do
             let queryString = pgQueryString term
             connection <- ask
             lift $ execute connection (fromString queryString) (pgRowIn row)
@@ -570,28 +594,28 @@ instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (UPDATE (TABLE table) project row)
-    , Subset (ProjectColumns project) (SchemaColumns (TableSchema table)) ~ 'True
-    , row ~ LiteralRowType database (TableSchema table) (ProjectColumns project)
+    , PGMakeQueryString (UPDATE (TABLE table) sub row)
+    , Subset (SubColumns sub) (SchemaColumns (TableSchema table)) ~ 'True
+    , row ~ LiteralRowType database (TableSchema table) (SubColumns sub)
     , PGRow row
     , ToRow (PGRowType row)
     , PGMakeRestriction condition
     , ToRow (PGMakeRestrictionValue condition)
-    ) => RunPostgres database (WHERE (UPDATE (TABLE table) project row) condition)
+    ) => RunPostgres database (WHERE (UPDATE (TABLE table) sub row) condition)
   where
-    type PostgresCodomain database (WHERE (UPDATE (TABLE table) project row) condition) = ReaderT Connection IO ()
+    type PostgresCodomain database (WHERE (UPDATE (TABLE table) sub row) condition) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
-        WHERE update@(UPDATE (TABLE proxyTable) project row) condition -> do
+        WHERE update@(UPDATE (TABLE proxyTable) sub row) condition -> do
             let queryString = pgQueryString update
             let (conditionString, conditionValues) = pgRestriction condition
             connection <- ask
             lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) ((pgRowIn row) :. conditionValues)
             return ()
 
-class PGMakeUpdateString project where
-    pgMakeUpdateString :: project -> String
+class PGMakeUpdateString sub where
+    pgMakeUpdateString :: sub -> String
 
-instance PGMakeUpdateStrings project => PGMakeUpdateString project where
+instance PGMakeUpdateStrings sub => PGMakeUpdateString sub where
     pgMakeUpdateString = concat . intersperse ", " . pgMakeUpdateStrings
 
 -- Given a suitable thing (a PROJECT, as the instances show), make a list of
@@ -599,22 +623,22 @@ instance PGMakeUpdateStrings project => PGMakeUpdateString project where
 -- question mark.
 class
     (
-    ) => PGMakeUpdateStrings project
+    ) => PGMakeUpdateStrings sub 
   where
-    pgMakeUpdateStrings :: project -> [String]
+    pgMakeUpdateStrings :: sub -> [String]
 
 instance {-# OVERLAPS #-}
     ( KnownSymbol (ColumnName column)
-    ) => PGMakeUpdateStrings (PROJECT column P)
+    ) => PGMakeUpdateStrings (SUB column S)
   where
     pgMakeUpdateStrings _ = [symbolVal (Proxy :: Proxy (ColumnName column)) ++ " = ?"]
 
 instance {-# OVERLAPS #-}
     ( KnownSymbol (ColumnName column)
     , PGMakeUpdateStrings rest
-    ) => PGMakeUpdateStrings (PROJECT column rest)
+    ) => PGMakeUpdateStrings (SUB column rest)
   where
-    pgMakeUpdateStrings (PROJECT _ rest) =
+    pgMakeUpdateStrings (SUB _ rest) =
           (symbolVal (Proxy :: Proxy (ColumnName column)) ++ " = ?")
         : pgMakeUpdateStrings rest
 
@@ -652,8 +676,8 @@ instance
 
 instance
     ( KnownSymbol (TableName table)
-    , PGMakeUpdateString project
-    ) => PGMakeQueryString (UPDATE (TABLE table) project row)
+    , PGMakeUpdateString sub 
+    ) => PGMakeQueryString (UPDATE (TABLE table) sub row)
   where
     pgQueryString term = case term of
         UPDATE (TABLE proxyTable) project row -> concat [
@@ -764,6 +788,9 @@ instance
 instance
     ( PGMakeRestriction left
     , PGMakeRestriction right
+    , PGTerminalRestriction left
+    , PGTerminalRestriction right
+    , PGTerminalRestrictionType left ~ PGTerminalRestrictionType right
     ) => PGMakeRestriction (EQUAL left right)
   where
     type PGMakeRestrictionValue (EQUAL left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
@@ -779,6 +806,64 @@ instance
             , ")"
             ]
         value = valueLeft :. valueRight
+
+instance
+    ( PGMakeRestriction left
+    , PGMakeRestriction right
+    , PGTerminalRestriction left
+    , PGTerminalRestriction right
+    , PGTerminalRestrictionType left ~ PGTerminalRestrictionType right
+    ) => PGMakeRestriction (LESSTHAN left right)
+  where
+    type PGMakeRestrictionValue (LESSTHAN left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
+    pgRestriction (LESSTHAN left right) = (queryString, value)
+      where
+        (queryStringLeft, valueLeft) = pgRestriction left
+        (queryStringRight, valueRight) = pgRestriction right
+        queryString = concat [
+              "("
+            , queryStringLeft
+            , ") < ("
+            , queryStringRight
+            , ")"
+            ]
+        value = valueLeft :. valueRight
+
+instance
+    ( PGMakeRestriction left
+    , PGMakeRestriction right
+    , PGTerminalRestriction left
+    , PGTerminalRestriction right
+    , PGTerminalRestrictionType left ~ PGTerminalRestrictionType right
+    ) => PGMakeRestriction (GREATERTHAN left right)
+  where
+    type PGMakeRestrictionValue (GREATERTHAN left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
+    pgRestriction (GREATERTHAN left right) = (queryString, value)
+      where
+        (queryStringLeft, valueLeft) = pgRestriction left
+        (queryStringRight, valueRight) = pgRestriction right
+        queryString = concat [
+              "("
+            , queryStringLeft
+            , ") > ("
+            , queryStringRight
+            , ")"
+            ]
+        value = valueLeft :. valueRight
+
+-- | This class identifies those terms which can serve as terminal elements of
+--   a restriction clause, i.e. not logical connectives like AND and OR.
+--   It comes with an associated type: the type of thing at this terminus,
+--   which is useful in order to guarantee well-typedness of restriction
+--   clauses.
+class PGTerminalRestriction term where
+    type PGTerminalRestrictionType term :: *
+
+instance PGTerminalRestriction (VALUE ty) where
+    type PGTerminalRestrictionType (VALUE ty) = ty
+
+instance PGTerminalRestriction (COLUMN tableName column) where
+    type PGTerminalRestrictionType (COLUMN tableName column) = ColumnType column
 
 -- To make a string of 0 or more ?, separated by columns and enclosed by
 -- parens, as we would use when doing an insertion.
@@ -814,21 +899,27 @@ class PGMakeProjectStrings project where
 instance {-# OVERLAPS #-}
     ( KnownSymbol name
     , KnownSymbol (ColumnName column)
-    ) => PGMakeProjectStrings (PROJECT '(name, column) P) where
+    , KnownSymbol alias
+    ) => PGMakeProjectStrings (PROJECT '(name, column, alias) P) where
     pgMakeProjectStrings _ = [concat [
           symbolVal (Proxy :: Proxy name)
         , "."
         , symbolVal (Proxy :: Proxy (ColumnName column))
+        , " AS "
+        , symbolVal (Proxy :: Proxy alias)
         ]]
 
 instance {-# OVERLAPS #-}
     ( KnownSymbol name
     , KnownSymbol (ColumnName column)
+    , KnownSymbol alias
     , PGMakeProjectStrings rest
-    ) => PGMakeProjectStrings (PROJECT '(name, column) rest)
+    ) => PGMakeProjectStrings (PROJECT '(name, column, alias) rest)
   where
     pgMakeProjectStrings _ = concat [
           symbolVal (Proxy :: Proxy name)
         , "."
         , symbolVal (Proxy :: Proxy (ColumnName column))
+        , " AS "
+        , symbolVal (Proxy :: Proxy alias)
         ] : pgMakeProjectStrings (Proxy :: Proxy rest)

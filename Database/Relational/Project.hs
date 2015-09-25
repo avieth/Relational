@@ -23,13 +23,15 @@ module Database.Relational.Project (
 
     , ProjectColumns
     , ProjectTableNames
+    , ProjectAliases
 
     ) where
 
 import Data.Proxy
 
 -- | Intended use: give a column and a table name for the left parameter, so as
---   to resolve a column within a query ("my_table.my_column").
+--   to resolve a column within a query ("my_table.my_column"), and then give
+--   an alias for this column.
 --   The right parameter is either another PROJECT with the same contract, or
 --   P.
 data PROJECT left right where
@@ -42,8 +44,12 @@ infixr 8 |:
 
 type family ProjectColumns project where
     ProjectColumns P = '[]
-    ProjectColumns (PROJECT '(tableName, column) rest) = column ': (ProjectColumns rest)
+    ProjectColumns (PROJECT '(tableName, column, alias) rest) = column ': (ProjectColumns rest)
 
 type family ProjectTableNames project where
     ProjectTableNames P = '[]
-    ProjectTableNames (PROJECT '(tableName, column) rest) = tableName ': (ProjectTableNames rest)
+    ProjectTableNames (PROJECT '(tableName, column, alias) rest) = tableName ': (ProjectTableNames rest)
+
+type family ProjectAliases project where
+    ProjectAliases P = '[]
+    ProjectAliases (PROJECT '(tableName, column, alias) rest) = alias ': (ProjectAliases rest)

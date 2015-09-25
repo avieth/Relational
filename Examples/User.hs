@@ -32,7 +32,7 @@ import Database.Relational.Insert
 import Database.Relational.Delete
 import Database.Relational.Values
 import Database.Relational.Value
-import Database.Relational.Restriction
+import Database.Relational.Restrict
 import Database.Relational.From
 import Database.Relational.Select
 import Database.Relational.Project
@@ -133,7 +133,7 @@ deleteUuid uuid = do
 
 selectAll :: ReaderT Connection IO [Identity PGUUID]
 selectAll = do
-    let uuid :: Proxy '("users", UUIDColumn)
+    let uuid :: Proxy '("users", UUIDColumn, "uuid")
         uuid = Proxy
     let selection = SELECT
                     (uuid |: P)

@@ -31,8 +31,11 @@ import Database.Relational.Insert
 import Database.Relational.Values
 import Database.Relational.Value
 import Database.Relational.Project
+import Database.Relational.Sub
 import Database.Relational.Update
-import Database.Relational.Restriction
+import Database.Relational.Restrict
+import Database.Relational.Select
+import Database.Relational.From
 import Data.Proxy
 import Examples.PostgresUniverse
 import Examples.User
@@ -111,7 +114,7 @@ readMessages :: UUID -> ReaderT Connection IO ()
 readMessages uuid = do
     let update = UPDATE
                  (TABLE messagesTable)
-                 (viewedColumn |: P)
+                 (viewedColumn \: S)
                  (Identity (PGBool True))
     runPostgres messagesDatabase update
 
@@ -120,8 +123,19 @@ changeItUp :: UUID -> Int -> Bool -> T.Text -> ReaderT Connection IO ()
 changeItUp uuid time viewed body = do
     let update = UPDATE
                  (TABLE messagesTable)
-                 (timeColumn |: viewedColumn |: bodyColumn |: P)
+                 (timeColumn \: viewedColumn \: bodyColumn \: S)
                  (PGBigInteger time, PGBool viewed, PGText body)
                  `WHERE`
                  (COLUMN (Proxy :: Proxy (TableName MessagesTable)) uuidColumn .==. VALUE (PGUUID uuid))
     runPostgres messagesDatabase update
+
+selectUnread :: ReaderT Connection IO [Identity PGUUID]
+selectUnread = do
+    let uuid :: Proxy '("messages", UUIDColumn, "uuid")
+        uuid = Proxy
+    let select = SELECT
+                 (uuid |: P)
+                 (FROM (TABLE messagesTable))
+                 `WHERE`
+                 (COLUMN (Proxy :: Proxy (TableName MessagesTable)) viewedColumn .==. VALUE (PGBool False))
+    runPostgres messagesDatabase select

@@ -1,5 +1,5 @@
 {-|
-Module      : Database.Relational.Restriction
+Module      : Database.Relational.Restrict
 Description : Definition of types related to restriction.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
@@ -13,7 +13,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE KindSignatures #-}
 
-module Database.Relational.Restriction where
+module Database.Relational.Restrict where
 
 data WHERE relation condition = WHERE relation condition
 
@@ -28,8 +28,16 @@ data EQUAL left right = EQUAL left right
 infixr 1 .==.
 (.==.) = EQUAL
 
+infixr 1 .<>.
+(.<>.) left right = NOT (left .==. right)
+
 data LESSTHAN left right = LESSTHAN left right
 
+infixr 1 .<.
+(.<.) = LESSTHAN
+
 data GREATERTHAN left right = GREATERTHAN left right
+infixr 1 .>.
+(.>.) = GREATERTHAN
 
 data ISNULL term = ISNULL term
