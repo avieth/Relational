@@ -30,9 +30,11 @@ import Control.Monad (forM_)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
 import Data.Constraint
+import Data.Functor.Identity
 import Data.Proxy
 import Data.String (fromString)
 import Data.List (intersperse)
+import Types.Subset
 import Database.Relational.Safe
 import Database.Relational.Universe
 import Database.Relational.Database
@@ -47,6 +49,8 @@ import Database.Relational.Value.PrimaryKey
 import Database.Relational.Value.ForeignKeys
 import Database.Relational.Insert
 import Database.Relational.Delete
+import Database.Relational.Update
+import Database.Relational.Project
 import Database.Relational.Value
 import Database.Relational.Values
 import Database.Relational.Restriction
@@ -287,12 +291,20 @@ foreignKeyReferenceColumnsStrings foreignKeyReferenced = case foreignKeyReferenc
           (symbolVal (Proxy :: Proxy (ForeignKeyReferenceLocal ref)), symbolVal (Proxy :: Proxy (ForeignKeyReferenceForeign ref)))
         : (foreignKeyReferenceColumnsStrings rest)
 
+
+
+{- Pretty sure this stuff ain't necessary. Will keep it around, though, since
+ - it is a lot of text.
+ -
 -- These are used as constraints in PGInsertLiteralRow instances to get a hold
 -- of a ToField constraint on whatever the literal row field type is: either
 -- ty or Maybe ty, depending on isOptional.
-class ( ToField (InsertLiteralRowsFieldType column isOptional) ) => PGInsertLiteralFieldConstraint column isOptional
-instance PostgresUniverseConstraint ty => PGInsertLiteralFieldConstraint '(name, ty) True
-instance PostgresUniverseConstraint ty => PGInsertLiteralFieldConstraint '(name, ty) False
+class
+    ( ToField (LiteralFieldType column isOptional)
+    , FromField (LiteralFieldType column isOptional)
+    ) => PGLiteralFieldConstraint column isOptional
+instance PostgresUniverseConstraint ty => PGLiteralFieldConstraint '(name, ty) True
+instance PostgresUniverseConstraint ty => PGLiteralFieldConstraint '(name, ty) False
 
 -- Parts of the insertion process depend upon the columns and schema:
 --   how many ?s to place and
@@ -303,7 +315,7 @@ class PGInsertLiteralRow database table columns where
         :: Proxy database
         -> Proxy table
         -> Proxy columns
-        -> InsertLiteralRowsType database (TableSchema table) columns
+        -> LiteralRowType database (TableSchema table) columns
         -> ReaderT Connection IO ()
 
 commonInsertPrefix
@@ -319,19 +331,19 @@ commonInsertPrefix _ = concat [
 
 instance
     ( KnownSymbol (TableName table)
-    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
     ) => PGInsertLiteralRow database table '[ c1 ]
   where
     pgInsertLiteralRow _ proxyTable _ term = case term of
         value -> do connection <- ask
                     let statement = concat [commonInsertPrefix proxyTable, "(?)"]
-                    lift $ execute connection (fromString statement) (Only value)
+                    lift $ execute connection (fromString statement) (Only (runIdentity value))
                     return ()
 
 instance
     ( KnownSymbol (TableName table)
-    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
     ) => PGInsertLiteralRow database table '[ c1, c2 ]
   where
     pgInsertLiteralRow _ proxyTable _ term = case term of
@@ -342,9 +354,9 @@ instance
 
 instance
     ( KnownSymbol (TableName table)
-    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    , PGInsertLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
+    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
     ) => PGInsertLiteralRow database table '[ c1, c2, c3 ]
   where
     pgInsertLiteralRow _ proxyTable _ term = case term of
@@ -355,10 +367,10 @@ instance
 
 instance
     ( KnownSymbol (TableName table)
-    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    , PGInsertLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
-    , PGInsertLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
+    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
+    , PGLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
     ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4 ]
   where
     pgInsertLiteralRow _ proxyTable _ term = case term of
@@ -369,11 +381,11 @@ instance
 
 instance
     ( KnownSymbol (TableName table)
-    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    , PGInsertLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
-    , PGInsertLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
-    , PGInsertLiteralFieldConstraint c5 (ColumnIsOptional database (TableSchema table) c5)
+    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
+    , PGLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
+    , PGLiteralFieldConstraint c5 (ColumnIsOptional database (TableSchema table) c5)
     ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4, c5 ]
   where
     pgInsertLiteralRow _ proxyTable _ term = case term of
@@ -384,12 +396,12 @@ instance
 
 instance
     ( KnownSymbol (TableName table)
-    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    , PGInsertLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
-    , PGInsertLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
-    , PGInsertLiteralFieldConstraint c5 (ColumnIsOptional database (TableSchema table) c5)
-    , PGInsertLiteralFieldConstraint c6 (ColumnIsOptional database (TableSchema table) c6)
+    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
+    , PGLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
+    , PGLiteralFieldConstraint c5 (ColumnIsOptional database (TableSchema table) c5)
+    , PGLiteralFieldConstraint c6 (ColumnIsOptional database (TableSchema table) c6)
     ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4, c5, c6 ]
   where
     pgInsertLiteralRow _ proxyTable _ term = case term of
@@ -397,28 +409,42 @@ instance
                      let statement = concat [commonInsertPrefix proxyTable, "(?,?,?,?,?,?)"]
                      lift $ execute connection (fromString statement) values
                      return ()
-
-pginsert
-    :: forall database table .
-       ( WellFormedDatabase database
-       , SafeDatabase database PostgresUniverse
-       , PGInsertLiteralRow database table (SchemaColumns (TableSchema table))
-       )
-    => Proxy database
-    -> Proxy table
-    -> [InsertLiteralRowsType database (TableSchema table) (SchemaColumns (TableSchema table))]
-    -> ReaderT Connection IO ()
-pginsert proxyDB proxyTable rows = forM_ rows (pgInsertLiteralRow proxyDB proxyTable proxyColumns)
-  where
-    proxyColumns :: Proxy (SchemaColumns (TableSchema table))
-    proxyColumns = Proxy
-
+-}
 
 --
 --
 -- The new design: heavily typeclass based.
 --
 --
+
+-- Must pick up single-element inserts and updates and use Only, so as to obtain
+-- the ToRow.
+class PGRow row where
+    type PGRowType row :: *
+    type PGRowType row = row
+    pgRowInject :: row -> PGRowType row
+
+instance PGRow (Identity t) where
+    type PGRowType (Identity t) = Only t
+    pgRowInject (Identity t) = Only t
+instance PGRow (t1, t2) where
+    pgRowInject = id
+instance PGRow (t1, t2, t3) where
+    pgRowInject = id
+instance PGRow (t1, t2, t3, t4) where
+    pgRowInject = id
+instance PGRow (t1, t2, t3, t4, t5) where
+    pgRowInject = id
+instance PGRow (t1, t2, t3, t4, t5, t6) where
+    pgRowInject = id
+instance PGRow (t1, t2, t3, t4, t5, t6, t7) where
+    pgRowInject = id
+instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8) where
+    pgRowInject = id
+instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8, t9) where
+    pgRowInject = id
+instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) where
+    pgRowInject = id
 
 class
     ( WellFormedDatabase database
@@ -433,15 +459,18 @@ instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , KnownSymbol (TableName table)
-    , PGInsertLiteralRow database table (SchemaColumns (TableSchema table))
-    , values ~ [InsertLiteralRowsType database (TableSchema table) (SchemaColumns (TableSchema table))]
+    , PGMakeQueryString (INSERT_INTO (TABLE table) (VALUES values))
+    , values ~ [LiteralRowType database (TableSchema table) (SchemaColumns (TableSchema table))]
+    , PGRow (LiteralRowType database (TableSchema table) (SchemaColumns (TableSchema table)))
+    , ToRow (PGRowType (LiteralRowType database (TableSchema table) (SchemaColumns (TableSchema table))))
     ) => RunPostgres database (INSERT_INTO (TABLE table) (VALUES values))
   where
     type PostgresCodomain database (INSERT_INTO (TABLE table) (VALUES values)) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
-        INSERT_INTO (TABLE proxyTable) (VALUES values) ->
-            forM_ values (pgInsertLiteralRow proxyDB proxyTable proxyColumns)
+        INSERT_INTO (TABLE proxyTable) (VALUES values) -> do
+            let queryString = fromString (pgQueryString term)
+            connection <- ask
+            forM_ values (lift . execute connection queryString . pgRowInject)
       where
         proxyColumns :: Proxy (SchemaColumns (TableSchema table))
         proxyColumns = Proxy
@@ -480,6 +509,58 @@ instance
             lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) values
             return ()
 
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , DatabaseHasTable database table
+    , PGMakeQueryString (UPDATE (TABLE table) projection row)
+    -- We guarantee that we're updating a subset of the schema columns ...
+    , Subset (ProjectColumns projection) (SchemaColumns (TableSchema table)) ~ 'True
+    -- ... and also that the values we give to fill them in are of the right
+    -- type.
+    , row ~ LiteralRowType database (TableSchema table) (ProjectColumns projection)
+    , PGRow row
+    , ToRow (PGRowType row)
+    ) => RunPostgres database (UPDATE (TABLE table) projection row)
+  where
+    type PostgresCodomain database (UPDATE (TABLE table) projection row) = ReaderT Connection IO ()
+    runPostgres proxyDB term = case term of
+        UPDATE (TABLE proxyTable) projection row -> do
+            let queryString = pgQueryString term
+            connection <- ask
+            lift $ execute connection (fromString queryString) (pgRowInject row)
+            return ()
+
+class PGMakeUpdateString projection where
+    pgMakeUpdateString :: projection -> String
+
+instance PGMakeUpdateStrings projection => PGMakeUpdateString projection where
+    pgMakeUpdateString = concat . intersperse ", " . pgMakeUpdateStrings
+
+-- Given a suitable thing (a PROJECT, as the instances show), make a list of
+-- strings where each string gives an assignment of some column name to a
+-- question mark.
+class
+    (
+    ) => PGMakeUpdateStrings projection
+  where
+    pgMakeUpdateStrings :: projection -> [String]
+
+instance {-# OVERLAPS #-}
+    ( KnownSymbol (ColumnName column)
+    ) => PGMakeUpdateStrings (PROJECT column P)
+  where
+    pgMakeUpdateStrings _ = [symbolVal (Proxy :: Proxy (ColumnName column)) ++ " = ?"]
+
+instance {-# OVERLAPS #-}
+    ( KnownSymbol (ColumnName column)
+    , PGMakeUpdateStrings rest
+    ) => PGMakeUpdateStrings (PROJECT column rest)
+  where
+    pgMakeUpdateStrings (PROJECT _ rest) =
+          (symbolVal (Proxy :: Proxy (ColumnName column)) ++ " = ?")
+        : pgMakeUpdateStrings rest
+
 -- This class is useful for composing queries, for instance when we encounter
 -- a WHERE clause and we just want to get the query string of the thing to
 -- be restricted.
@@ -491,6 +572,19 @@ class
 
 instance
     ( KnownSymbol (TableName table)
+    , PGMakeValuesString (SchemaColumns (TableSchema table))
+    ) => PGMakeQueryString (INSERT_INTO (TABLE table) t)
+  where
+    pgQueryString term = case term of
+        INSERT_INTO (TABLE proxyTable) _ -> concat [
+              "INSERT INTO "
+            , symbolVal (Proxy :: Proxy (TableName table))
+            , " VALUES "
+            , pgMakeValuesString (Proxy :: Proxy (SchemaColumns (TableSchema table)))
+            ]
+
+instance
+    ( KnownSymbol (TableName table)
     ) => PGMakeQueryString (DELETE_FROM (TABLE table))
   where
     pgQueryString term = case term of
@@ -498,6 +592,21 @@ instance
               "DELETE FROM "
             , symbolVal (Proxy :: Proxy (TableName table))
             ]
+
+instance
+    ( KnownSymbol (TableName table)
+    , PGMakeUpdateString projection
+    ) => PGMakeQueryString (UPDATE (TABLE table) projection row)
+  where
+    pgQueryString term = case term of
+        UPDATE (TABLE proxyTable) projection row -> concat [
+              "UPDATE "
+            , symbolVal (Proxy :: Proxy (TableName table))
+            , " SET "
+            , updateString
+            ]
+          where
+            updateString = pgMakeUpdateString projection
 
 class
     (
@@ -600,3 +709,24 @@ instance
             , ")"
             ]
         value = valueLeft :. valueRight
+
+-- To make a string of 0 or more ?, separated by columns and enclosed by
+-- parens, as we would use when doing an insertion.
+class PGMakeValuesString columns where
+    pgMakeValuesString :: Proxy columns -> String
+
+instance PGMakeValuesStrings columns => PGMakeValuesString columns where
+    pgMakeValuesString proxy = concat [
+          "("
+        , concat (intersperse "," (pgMakeValuesStrings proxy))
+        , ")"
+        ]
+
+class PGMakeValuesStrings columns where
+    pgMakeValuesStrings :: Proxy columns -> [String]
+
+instance PGMakeValuesStrings '[] where
+    pgMakeValuesStrings _ = []
+
+instance PGMakeValuesStrings cs => PGMakeValuesStrings (c ': cs) where
+    pgMakeValuesStrings _ = "?" : pgMakeValuesStrings (Proxy :: Proxy cs)

@@ -24,6 +24,7 @@ module Types.Subset (
 import Types.BooleanLogic
 import Types.Member
 
+-- | True iff @ss@ is a subset of @ts@. Pay close attention to the order.
 type family Subset (ss :: [k]) (ts :: [k]) :: Bool where
     Subset '[] ts = 'True
     Subset (s ': ss) ts = And (Member s ts) (Subset ss ts)

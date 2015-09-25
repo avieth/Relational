@@ -29,9 +29,12 @@ import Database.Relational.Schema
 import Database.Relational.Column
 import Database.Relational.Insert
 import Database.Relational.Values
+import Database.Relational.Project
+import Database.Relational.Update
 import Data.Proxy
 import Examples.PostgresUniverse
 import Examples.User
+import Data.Functor.Identity
 import Data.UUID
 import Data.UUID.V4 (nextRandom)
 import Database.PostgreSQL.Simple
@@ -76,6 +79,9 @@ messagesTable = Proxy
 messagesDatabase :: Proxy MessagesDatabase
 messagesDatabase = Proxy
 
+viewedColumn :: Proxy ViewedColumn
+viewedColumn = Proxy
+
 insertMessage :: UUID -> UUID -> T.Text -> ReaderT Connection IO ()
 insertMessage sender receiver body = do
     messageId <- lift nextRandom
@@ -91,3 +97,12 @@ insertMessage sender receiver body = do
                             )]
                     )
     runPostgres messagesDatabase insertion
+
+-- Mark all messages as read.
+readMessages :: UUID -> ReaderT Connection IO ()
+readMessages uuid = do
+    let update = UPDATE
+                 (TABLE messagesTable)
+                 (viewedColumn |: P)
+                 (Identity (PGBool True))
+    runPostgres messagesDatabase update

@@ -35,6 +35,7 @@ import Database.Relational.Value
 import Database.Relational.Restriction
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
+import Data.Functor.Identity
 import Data.UUID
 import Data.UUID.V4 (nextRandom)
 
@@ -104,7 +105,14 @@ insertThree = do
     u1 <- lift nextRandom
     u2 <- lift nextRandom
     u3 <- lift nextRandom
-    let insertion = INSERT_INTO (TABLE userTable) (VALUES [PGUUID u1, PGUUID u2, PGUUID u3])
+    let insertion = INSERT_INTO
+                    (TABLE userTable)
+                    (VALUES [
+                          Identity (PGUUID u1)
+                        , Identity (PGUUID u2)
+                        , Identity (PGUUID u3)
+                        ]
+                    )
     runPostgres userDatabase insertion
 
 deleteAll :: ReaderT Connection IO ()
