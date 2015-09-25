@@ -45,6 +45,7 @@ import Database.Relational.Value.Columns
 import Database.Relational.Value.PrimaryKey
 import Database.Relational.Value.ForeignKeys
 import Database.Relational.Insert
+import Database.Relational.Delete
 import Database.Relational.Values
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
@@ -402,4 +403,35 @@ instance
         proxyColumns :: Proxy (SchemaColumns (TableSchema table))
         proxyColumns = Proxy
 
--- 
+-- We know how to delete values from a table.
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , DatabaseHasTable database table
+    , KnownSymbol (TableName table)
+    --, PGMakeQueryString (DELETE_FROM (TABLE table))
+    ) => RunPostgres database (DELETE_FROM (TABLE table))
+  where
+    type PostgresCodomain database (DELETE_FROM (TABLE table)) = ReaderT Connection IO ()
+    runPostgres proxyDB term = case term of
+        DELETE_FROM (TABLE proxyTable) -> do
+            let query = fromString (pgQueryString term)
+            connection <- ask
+            lift $ execute_ connection query
+            return ()
+
+class
+    (
+    ) => PGMakeQueryString term
+  where
+    pgQueryString :: term -> String
+
+instance
+    ( KnownSymbol (TableName table)
+    ) => PGMakeQueryString (DELETE_FROM (TABLE table))
+  where
+    pgQueryString term = case term of
+        DELETE_FROM (TABLE proxyTable) -> concat [
+              "DELETE FROM "
+            , symbolVal (Proxy :: Proxy (TableName table))
+            ]

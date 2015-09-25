@@ -28,6 +28,7 @@ import Database.Relational.Schema
 import Database.Relational.ForeignKeyCycles
 import Database.Relational.Value.Database
 import Database.Relational.Insert
+import Database.Relational.Delete
 import Database.Relational.Values
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
@@ -97,4 +98,7 @@ insertThree = do
     runPostgres userDatabase insertion
     --pginsert userDatabase userTable [(PGUUID u3)]
 
-
+deleteAll :: ReaderT Connection IO ()
+deleteAll = do
+    let deletion = DELETE_FROM (TABLE userTable) -- `WHERE` (COLUMN UUIDColumn .==. uuid)
+    runPostgres userDatabase deletion
