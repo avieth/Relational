@@ -34,6 +34,10 @@ module Database.Relational.Schema (
     , ForeignKeyReferences
     , ForeignKeyReferenceLocal
     , ForeignKeyReferenceForeign
+    , IsPrimaryKey
+    , IsUnique
+    , IsNotNull
+    , ColumnIsOptional
 
     ) where
 
@@ -133,6 +137,10 @@ type family IsNotNull columnName schema :: Bool where
     IsNotNull columnName schema =
           Or (IsPrimaryKey columnName schema) (Member columnName (SchemaNotNull schema))
 
+type family IsDefault columnName schema :: Bool where
+    IsDefault columnName schema =
+        Member columnName (SchemaDefault schema)
+
 -- To determine schema well-formedness, we need the name of the schema, the
 -- schema itself, and the database in which it lives. This is to be able to
 -- resolve foreign key well-formedness.
@@ -202,3 +210,16 @@ type family WellFormedNotNull notNull schema :: Constraint where
           Unique notNull ~ 'True
         , Subset notNull (ColumnNames (SchemaColumns schema)) ~ 'True
         )
+
+-- | TODO this is not complete; must also check foreign keys! If it references
+--   a column which is not optional (recursive check on foreign key as well)
+--   then it is not optional.
+--
+--   NB this is different from "can be null": a column with a default is
+--   optional.
+type family ColumnIsOptional database schema column :: Bool where
+    ColumnIsOptional database schema column = All '[
+          Not (IsPrimaryKey (ColumnName column) schema)
+        , Not (IsNotNull (ColumnName column) schema)
+        , Any '[ IsDefault (ColumnName column) schema ]
+        ]
