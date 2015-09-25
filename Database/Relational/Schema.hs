@@ -127,15 +127,25 @@ type family ForeignKeyForeignColumns foreignKey database where
 
 type family IsPrimaryKey columnName schema :: Bool where
     IsPrimaryKey columnName schema =
-          Member columnName (SchemaPrimaryKey schema)
+        Member columnName (SchemaPrimaryKey schema)
+
+type family IsForeignKey columnName schema :: Bool where
+    IsForeignKey columnName schema = IsForeignKeyRec columnName (SchemaForeignKeys schema)
+
+type family IsForeignKeyRec columnName foreignKeys :: Bool where
+    IsForeignKeyRec columnName '[] = False
+    IsForeignKeyRec columnName (fkey ': fkeys) =
+        Or
+        (Member columnName (ForeignKeyLocalNames fkey))
+        (IsForeignKeyRec columnName fkeys)
 
 type family IsUnique columnName schema :: Bool where
     IsUnique columnName schema =
-          Or (IsPrimaryKey columnName schema) (Member columnName (SchemaUnique schema))
+        Or (IsPrimaryKey columnName schema) (Member columnName (SchemaUnique schema))
 
 type family IsNotNull columnName schema :: Bool where
     IsNotNull columnName schema =
-          Or (IsPrimaryKey columnName schema) (Member columnName (SchemaNotNull schema))
+        Or (IsPrimaryKey columnName schema) (Member columnName (SchemaNotNull schema))
 
 type family IsDefault columnName schema :: Bool where
     IsDefault columnName schema =
@@ -211,15 +221,12 @@ type family WellFormedNotNull notNull schema :: Constraint where
         , Subset notNull (ColumnNames (SchemaColumns schema)) ~ 'True
         )
 
--- | TODO this is not complete; must also check foreign keys! If it references
---   a column which is not optional (recursive check on foreign key as well)
---   then it is not optional.
---
---   NB this is different from "can be null": a column with a default is
+-- | NB this is different from "can be null": a column with a default is
 --   optional.
 type family ColumnIsOptional database schema column :: Bool where
     ColumnIsOptional database schema column = All '[
           Not (IsPrimaryKey (ColumnName column) schema)
+        , Not (IsForeignKey (ColumnName column) schema)
         , Not (IsNotNull (ColumnName column) schema)
         , Any '[ IsDefault (ColumnName column) schema ]
         ]
