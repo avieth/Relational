@@ -12,8 +12,8 @@ Portability : non-portable (GHC only)
 
 module Database.Relational.Delete (
 
-      DELETE_FROM(..)
+      DELETE(..)
 
     ) where
 
-data DELETE_FROM a = DELETE_FROM a
+data DELETE a = DELETE a

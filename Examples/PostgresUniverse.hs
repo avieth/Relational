@@ -54,6 +54,7 @@ import Database.Relational.Project
 import Database.Relational.Value
 import Database.Relational.Values
 import Database.Relational.Restriction
+import Database.Relational.From
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
@@ -481,11 +482,11 @@ instance
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
     , KnownSymbol (TableName table)
-    ) => RunPostgres database (DELETE_FROM (TABLE table))
+    ) => RunPostgres database (DELETE (FROM table))
   where
-    type PostgresCodomain database (DELETE_FROM (TABLE table)) = ReaderT Connection IO ()
+    type PostgresCodomain database (DELETE (FROM table)) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
-        DELETE_FROM (TABLE proxyTable) -> do
+        DELETE (FROM proxyTable) -> do
             let query = fromString (pgQueryString term)
             connection <- ask
             lift $ execute_ connection query
@@ -495,12 +496,12 @@ instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (DELETE_FROM (TABLE table))
+    , PGMakeQueryString (DELETE (FROM table))
     , PGMakeRestriction condition
     , ToRow (PGMakeRestrictionValue condition)
-    ) => RunPostgres database (WHERE (DELETE_FROM (TABLE table)) condition)
+    ) => RunPostgres database (WHERE (DELETE (FROM table)) condition)
   where
-    type PostgresCodomain database (WHERE (DELETE_FROM (TABLE table)) condition) = ReaderT Connection IO ()
+    type PostgresCodomain database (WHERE (DELETE (FROM table)) condition) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
         WHERE delete condition -> do
             let queryString = pgQueryString delete
@@ -607,10 +608,10 @@ instance
 
 instance
     ( KnownSymbol (TableName table)
-    ) => PGMakeQueryString (DELETE_FROM (TABLE table))
+    ) => PGMakeQueryString (DELETE (FROM table))
   where
     pgQueryString term = case term of
-        DELETE_FROM (TABLE proxyTable) -> concat [
+        DELETE (FROM proxyTable) -> concat [
               "DELETE FROM "
             , symbolVal (Proxy :: Proxy (TableName table))
             ]
