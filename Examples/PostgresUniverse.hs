@@ -21,6 +21,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Examples.PostgresUniverse where
 
@@ -59,28 +60,37 @@ import Data.Int
 data PostgresUniverse
 
 class
-    ( --ToField (Maybe t)
-    --, FromField (Maybe t)
-      ToField t
+    ( ToField t
     , FromField t
     ) => PostgresUniverseConstraint t
   where
     postgresUniverseTypeId :: Proxy t -> String
 
+newtype PGBool = PGBool Bool
+  deriving (Show, FromField, ToField)
+
+-- PostgreSQL 4-byte integer. We can safely use an Int.
+newtype PGInteger = PGInteger Int
+  deriving (Show, FromField, ToField)
+
+-- PostgreSQL 8-byte integer. That's GHC's Int... maybe platform dependent!
+newtype PGBigInteger = PGBigInteger Int
+  deriving (Show, FromField, ToField)
+
 newtype PGText = PGText T.Text
+  deriving (Show, FromField, ToField)
+
 newtype PGUUID = PGUUID UUID
+  deriving (Show, FromField, ToField)
 
-instance ToField PGText where
-    toField (PGText text) = toField text
+instance PostgresUniverseConstraint PGBool where
+    postgresUniverseTypeId _ = "bool"
 
-instance ToField PGUUID where
-    toField (PGUUID uuid) = toField uuid
+instance PostgresUniverseConstraint PGInteger where
+    postgresUniverseTypeId _ = "int4"
 
-instance FromField PGText where
-    fromField = (fmap . fmap . fmap) PGText fromField
-
-instance FromField PGUUID where
-    fromField = (fmap . fmap . fmap) PGUUID fromField
+instance PostgresUniverseConstraint PGBigInteger where
+    postgresUniverseTypeId _ = "int8"
 
 instance PostgresUniverseConstraint PGUUID where
     postgresUniverseTypeId _ = "uuid"
@@ -354,6 +364,37 @@ instance
     pgInsertLiteralRow _ proxyTable _ term = case term of
         values -> do connection <- ask
                      let statement = concat [commonInsertPrefix proxyTable, "(?,?,?,?)"]
+                     lift $ execute connection (fromString statement) values
+                     return ()
+
+instance
+    ( KnownSymbol (TableName table)
+    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGInsertLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
+    , PGInsertLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
+    , PGInsertLiteralFieldConstraint c5 (ColumnIsOptional database (TableSchema table) c5)
+    ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4, c5 ]
+  where
+    pgInsertLiteralRow _ proxyTable _ term = case term of
+        values -> do connection <- ask
+                     let statement = concat [commonInsertPrefix proxyTable, "(?,?,?,?,?)"]
+                     lift $ execute connection (fromString statement) values
+                     return ()
+
+instance
+    ( KnownSymbol (TableName table)
+    , PGInsertLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
+    , PGInsertLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
+    , PGInsertLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
+    , PGInsertLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
+    , PGInsertLiteralFieldConstraint c5 (ColumnIsOptional database (TableSchema table) c5)
+    , PGInsertLiteralFieldConstraint c6 (ColumnIsOptional database (TableSchema table) c6)
+    ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4, c5, c6 ]
+  where
+    pgInsertLiteralRow _ proxyTable _ term = case term of
+        values -> do connection <- ask
+                     let statement = concat [commonInsertPrefix proxyTable, "(?,?,?,?,?,?)"]
                      lift $ execute connection (fromString statement) values
                      return ()
 

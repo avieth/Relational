@@ -38,6 +38,9 @@ import Database.PostgreSQL.Simple
 import Data.UUID
 import Data.UUID.V4 (nextRandom)
 
+type UUIDColumn = Column "uuid" PGUUID
+type UsernameColumn = Column "username" PGText
+
 type UserTable = Table "users" UserSchema
 type UserSchema
     = Schema
@@ -48,13 +51,13 @@ type UserSchema
       UserNotNull
       UserCheck
       UserDeflt
-type UserColumns = '[ '("uuid", PGUUID) ]
-type UserPrimaryKey = '["uuid"]
+type UserColumns = '[ UUIDColumn ]
+type UserPrimaryKey = '[ "uuid" ]
 type UserForeignKey = '[]
 -- This foreign key induces a cycle and is caught by our type program!!
 --type UserForeignKey = '[ '( '[ '("uuid", "uuid") ] , "usernames") ]
-type UserUnique = '["uuid"]
-type UserNotNull = '["uuid"]
+type UserUnique = '[ "uuid" ]
+type UserNotNull = '[ "uuid" ]
 type UserCheck = '[]
 type UserDeflt = '[]
 
@@ -68,11 +71,11 @@ type UsernameSchema
       UsernameNotNull
       UsernameCheck
       UsernameDeflt
-type UsernameColumns = '[ '("uuid", PGUUID), '("username", PGText) ]
-type UsernamePrimaryKey = '["uuid"]
+type UsernameColumns = '[ UUIDColumn, UsernameColumn ]
+type UsernamePrimaryKey = '[ "uuid" ]
 type UsernameForeignKey = '[ '( '[ '("uuid", "uuid") ], "users") ]
-type UsernameUnique = '["uuid", "username"]
-type UsernameNotNull = '["uuid", "username"]
+type UsernameUnique = '[ "uuid", "username" ]
+type UsernameNotNull = '[ "uuid", "username" ]
 type UsernameCheck = '[]
 type UsernameDeflt = '[]
 
