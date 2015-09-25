@@ -34,6 +34,8 @@ import Database.Relational.Values
 import Database.Relational.Value
 import Database.Relational.Restriction
 import Database.Relational.From
+import Database.Relational.Select
+import Database.Relational.Project
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
 import Data.Functor.Identity
@@ -118,13 +120,22 @@ insertThree = do
 
 deleteAll :: ReaderT Connection IO ()
 deleteAll = do
-    let deletion = DELETE (FROM userTable)
+    let deletion = DELETE (FROM (TABLE userTable))
     runPostgres userDatabase deletion
 
 deleteUuid :: UUID -> ReaderT Connection IO ()
 deleteUuid uuid = do
     let deletion = DELETE
-                   (FROM userTable)
+                   (FROM (TABLE userTable))
                    `WHERE`
                    ((COLUMN (Proxy :: Proxy (TableName UserTable)) uuidColumn) .==. (VALUE (PGUUID uuid)))
     runPostgres userDatabase deletion
+
+selectAll :: ReaderT Connection IO [Identity PGUUID]
+selectAll = do
+    let uuid :: Proxy '("users", UUIDColumn)
+        uuid = Proxy
+    let selection = SELECT
+                    (uuid |: P)
+                    (FROM (TABLE userTable))
+    runPostgres userDatabase selection

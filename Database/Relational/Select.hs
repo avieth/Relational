@@ -1,6 +1,6 @@
 {-|
-Module      : Database.Relational.From
-Description : Definition of FROM.
+Module      : Database.Relational.Select
+Description : Definition of SELECT.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
@@ -9,13 +9,11 @@ Portability : non-portable (GHC only)
 -}
 
 {-# LANGUAGE AutoDeriveTypeable #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE PolyKinds #-}
 
-module Database.Relational.From (
+module Database.Relational.Select (
 
-      FROM(..)
+      SELECT(..)
 
     ) where
 
-data FROM a = FROM a
+data SELECT projection tableClause = SELECT projection tableClause

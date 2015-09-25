@@ -47,6 +47,7 @@ import Database.Relational.Value.Schema
 import Database.Relational.Value.Columns
 import Database.Relational.Value.PrimaryKey
 import Database.Relational.Value.ForeignKeys
+import Database.Relational.Select
 import Database.Relational.Insert
 import Database.Relational.Delete
 import Database.Relational.Update
@@ -423,29 +424,40 @@ instance
 class PGRow row where
     type PGRowType row :: *
     type PGRowType row = row
-    pgRowInject :: row -> PGRowType row
+    pgRowIn :: row -> PGRowType row
+    pgRowOut :: PGRowType row -> row
 
 instance PGRow (Identity t) where
     type PGRowType (Identity t) = Only t
-    pgRowInject (Identity t) = Only t
+    pgRowIn (Identity t) = Only t
+    pgRowOut (Only t) = Identity t
 instance PGRow (t1, t2) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (t1, t2, t3) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (t1, t2, t3, t4) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (t1, t2, t3, t4, t5) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (t1, t2, t3, t4, t5, t6) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (t1, t2, t3, t4, t5, t6, t7) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8, t9) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) where
-    pgRowInject = id
+    pgRowIn = id
+    pgRowOut = id
 
 class
     ( WellFormedDatabase database
@@ -454,6 +466,25 @@ class
   where
     type PostgresCodomain database term :: *
     runPostgres :: Proxy database -> term -> PostgresCodomain database term
+
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , DatabaseHasTable database table
+    , PGMakeQueryString (SELECT project (FROM (TABLE table)))
+    , Subset (ProjectColumns project) (SchemaColumns (TableSchema table)) ~ 'True
+    , Subset (ProjectTableNames project) '[TableName table] ~ 'True
+    , PGRow (LiteralRowType database (TableSchema table) (ProjectColumns project))
+    , FromRow (PGRowType (LiteralRowType database (TableSchema table) (ProjectColumns project)))
+    ) => RunPostgres database (SELECT project (FROM (TABLE table)))
+  where
+    type PostgresCodomain database (SELECT project (FROM (TABLE table))) = ReaderT Connection IO [LiteralRowType database (TableSchema table) (ProjectColumns project)]
+    runPostgres proxyDB term = do
+        let queryString = fromString (pgQueryString term)
+        connection <- ask
+        rows <- lift $ query connection queryString ()
+        return (fmap pgRowOut rows)
+
 
 -- We know how to insert values into a table.
 instance
@@ -471,7 +502,7 @@ instance
         INSERT_INTO (TABLE proxyTable) (VALUES values) -> do
             let queryString = fromString (pgQueryString term)
             connection <- ask
-            forM_ values (lift . execute connection queryString . pgRowInject)
+            forM_ values (lift . execute connection queryString . pgRowIn)
       where
         proxyColumns :: Proxy (SchemaColumns (TableSchema table))
         proxyColumns = Proxy
@@ -482,26 +513,27 @@ instance
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
     , KnownSymbol (TableName table)
-    ) => RunPostgres database (DELETE (FROM table))
+    ) => RunPostgres database (DELETE (FROM (TABLE table)))
   where
-    type PostgresCodomain database (DELETE (FROM table)) = ReaderT Connection IO ()
+    type PostgresCodomain database (DELETE (FROM (TABLE table))) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
-        DELETE (FROM proxyTable) -> do
+        DELETE (FROM (TABLE proxyTable)) -> do
             let query = fromString (pgQueryString term)
             connection <- ask
             lift $ execute_ connection query
             return ()
 
+-- We can delete with restriction.
 instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (DELETE (FROM table))
+    , PGMakeQueryString (DELETE (FROM (TABLE table)))
     , PGMakeRestriction condition
     , ToRow (PGMakeRestrictionValue condition)
-    ) => RunPostgres database (WHERE (DELETE (FROM table)) condition)
+    ) => RunPostgres database (WHERE (DELETE (FROM (TABLE table))) condition)
   where
-    type PostgresCodomain database (WHERE (DELETE (FROM table)) condition) = ReaderT Connection IO ()
+    type PostgresCodomain database (WHERE (DELETE (FROM (TABLE table))) condition) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
         WHERE delete condition -> do
             let queryString = pgQueryString delete
@@ -510,54 +542,56 @@ instance
             lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) values
             return ()
 
+-- We can update a table.
 instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (UPDATE (TABLE table) projection row)
+    , PGMakeQueryString (UPDATE (TABLE table) project row)
     -- We guarantee that we're updating a subset of the schema columns ...
-    , Subset (ProjectColumns projection) (SchemaColumns (TableSchema table)) ~ 'True
+    , Subset (ProjectColumns project) (SchemaColumns (TableSchema table)) ~ 'True
     -- ... and also that the values we give to fill them in are of the right
     -- type.
-    , row ~ LiteralRowType database (TableSchema table) (ProjectColumns projection)
+    , row ~ LiteralRowType database (TableSchema table) (ProjectColumns project)
     , PGRow row
     , ToRow (PGRowType row)
-    ) => RunPostgres database (UPDATE (TABLE table) projection row)
+    ) => RunPostgres database (UPDATE (TABLE table) project row)
   where
-    type PostgresCodomain database (UPDATE (TABLE table) projection row) = ReaderT Connection IO ()
+    type PostgresCodomain database (UPDATE (TABLE table) project row) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
-        UPDATE (TABLE proxyTable) projection row -> do
+        UPDATE (TABLE proxyTable) project row -> do
             let queryString = pgQueryString term
             connection <- ask
-            lift $ execute connection (fromString queryString) (pgRowInject row)
+            lift $ execute connection (fromString queryString) (pgRowIn row)
             return ()
 
+-- We can update with restriction.
 instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (UPDATE (TABLE table) projection row)
-    , Subset (ProjectColumns projection) (SchemaColumns (TableSchema table)) ~ 'True
-    , row ~ LiteralRowType database (TableSchema table) (ProjectColumns projection)
+    , PGMakeQueryString (UPDATE (TABLE table) project row)
+    , Subset (ProjectColumns project) (SchemaColumns (TableSchema table)) ~ 'True
+    , row ~ LiteralRowType database (TableSchema table) (ProjectColumns project)
     , PGRow row
     , ToRow (PGRowType row)
     , PGMakeRestriction condition
     , ToRow (PGMakeRestrictionValue condition)
-    ) => RunPostgres database (WHERE (UPDATE (TABLE table) projection row) condition)
+    ) => RunPostgres database (WHERE (UPDATE (TABLE table) project row) condition)
   where
-    type PostgresCodomain database (WHERE (UPDATE (TABLE table) projection row) condition) = ReaderT Connection IO ()
+    type PostgresCodomain database (WHERE (UPDATE (TABLE table) project row) condition) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
-        WHERE update@(UPDATE (TABLE proxyTable) projection row) condition -> do
+        WHERE update@(UPDATE (TABLE proxyTable) project row) condition -> do
             let queryString = pgQueryString update
             let (conditionString, conditionValues) = pgRestriction condition
             connection <- ask
-            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) ((pgRowInject row) :. conditionValues)
+            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) ((pgRowIn row) :. conditionValues)
             return ()
 
-class PGMakeUpdateString projection where
-    pgMakeUpdateString :: projection -> String
+class PGMakeUpdateString project where
+    pgMakeUpdateString :: project -> String
 
-instance PGMakeUpdateStrings projection => PGMakeUpdateString projection where
+instance PGMakeUpdateStrings project => PGMakeUpdateString project where
     pgMakeUpdateString = concat . intersperse ", " . pgMakeUpdateStrings
 
 -- Given a suitable thing (a PROJECT, as the instances show), make a list of
@@ -565,9 +599,9 @@ instance PGMakeUpdateStrings projection => PGMakeUpdateString projection where
 -- question mark.
 class
     (
-    ) => PGMakeUpdateStrings projection
+    ) => PGMakeUpdateStrings project
   where
-    pgMakeUpdateStrings :: projection -> [String]
+    pgMakeUpdateStrings :: project -> [String]
 
 instance {-# OVERLAPS #-}
     ( KnownSymbol (ColumnName column)
@@ -608,28 +642,41 @@ instance
 
 instance
     ( KnownSymbol (TableName table)
-    ) => PGMakeQueryString (DELETE (FROM table))
+    ) => PGMakeQueryString (DELETE (FROM (TABLE table)))
   where
     pgQueryString term = case term of
-        DELETE (FROM proxyTable) -> concat [
+        DELETE (FROM (TABLE proxyTable)) -> concat [
               "DELETE FROM "
             , symbolVal (Proxy :: Proxy (TableName table))
             ]
 
 instance
     ( KnownSymbol (TableName table)
-    , PGMakeUpdateString projection
-    ) => PGMakeQueryString (UPDATE (TABLE table) projection row)
+    , PGMakeUpdateString project
+    ) => PGMakeQueryString (UPDATE (TABLE table) project row)
   where
     pgQueryString term = case term of
-        UPDATE (TABLE proxyTable) projection row -> concat [
+        UPDATE (TABLE proxyTable) project row -> concat [
               "UPDATE "
             , symbolVal (Proxy :: Proxy (TableName table))
             , " SET "
             , updateString
             ]
           where
-            updateString = pgMakeUpdateString projection
+            updateString = pgMakeUpdateString project
+
+instance
+    ( KnownSymbol (TableName table)
+    , PGMakeProjectString project
+    ) => PGMakeQueryString (SELECT project (FROM (TABLE table)))
+  where
+    pgQueryString term = case term of
+        SELECT project (FROM (TABLE proxyTable)) -> concat [
+              "SELECT "
+            , pgMakeProjectString (Proxy :: Proxy project)
+            , " FROM "
+            , symbolVal (Proxy :: Proxy (TableName table))
+            ]
 
 class
     (
@@ -753,3 +800,35 @@ instance PGMakeValuesStrings '[] where
 
 instance PGMakeValuesStrings cs => PGMakeValuesStrings (c ': cs) where
     pgMakeValuesStrings _ = "?" : pgMakeValuesStrings (Proxy :: Proxy cs)
+
+
+class PGMakeProjectString project where
+    pgMakeProjectString :: Proxy project -> String
+
+instance PGMakeProjectStrings project => PGMakeProjectString project where
+    pgMakeProjectString proxy = concat (intersperse "," (pgMakeProjectStrings proxy))
+
+class PGMakeProjectStrings project where
+    pgMakeProjectStrings :: Proxy project -> [String]
+
+instance {-# OVERLAPS #-}
+    ( KnownSymbol name
+    , KnownSymbol (ColumnName column)
+    ) => PGMakeProjectStrings (PROJECT '(name, column) P) where
+    pgMakeProjectStrings _ = [concat [
+          symbolVal (Proxy :: Proxy name)
+        , "."
+        , symbolVal (Proxy :: Proxy (ColumnName column))
+        ]]
+
+instance {-# OVERLAPS #-}
+    ( KnownSymbol name
+    , KnownSymbol (ColumnName column)
+    , PGMakeProjectStrings rest
+    ) => PGMakeProjectStrings (PROJECT '(name, column) rest)
+  where
+    pgMakeProjectStrings _ = concat [
+          symbolVal (Proxy :: Proxy name)
+        , "."
+        , symbolVal (Proxy :: Proxy (ColumnName column))
+        ] : pgMakeProjectStrings (Proxy :: Proxy rest)
