@@ -82,6 +82,12 @@ messagesDatabase = Proxy
 viewedColumn :: Proxy ViewedColumn
 viewedColumn = Proxy
 
+timeColumn :: Proxy SendTimeColumn
+timeColumn = Proxy
+
+bodyColumn :: Proxy BodyColumn
+bodyColumn = Proxy
+
 insertMessage :: UUID -> UUID -> T.Text -> ReaderT Connection IO ()
 insertMessage sender receiver body = do
     messageId <- lift nextRandom
@@ -105,4 +111,13 @@ readMessages uuid = do
                  (TABLE messagesTable)
                  (viewedColumn |: P)
                  (Identity (PGBool True))
+    runPostgres messagesDatabase update
+
+-- Change three columns, just for demonstration.
+changeItUp :: UUID -> Int -> Bool -> T.Text -> ReaderT Connection IO ()
+changeItUp uuid time viewed body = do
+    let update = UPDATE
+                 (TABLE messagesTable)
+                 (timeColumn |: viewedColumn |: bodyColumn |: P)
+                 (PGBigInteger time, PGBool viewed, PGText body)
     runPostgres messagesDatabase update
