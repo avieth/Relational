@@ -531,6 +531,28 @@ instance
             lift $ execute connection (fromString queryString) (pgRowInject row)
             return ()
 
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , DatabaseHasTable database table
+    , PGMakeQueryString (UPDATE (TABLE table) projection row)
+    , Subset (ProjectColumns projection) (SchemaColumns (TableSchema table)) ~ 'True
+    , row ~ LiteralRowType database (TableSchema table) (ProjectColumns projection)
+    , PGRow row
+    , ToRow (PGRowType row)
+    , PGMakeRestriction condition
+    , ToRow (PGMakeRestrictionValue condition)
+    ) => RunPostgres database (WHERE (UPDATE (TABLE table) projection row) condition)
+  where
+    type PostgresCodomain database (WHERE (UPDATE (TABLE table) projection row) condition) = ReaderT Connection IO ()
+    runPostgres proxyDB term = case term of
+        WHERE update@(UPDATE (TABLE proxyTable) projection row) condition -> do
+            let queryString = pgQueryString update
+            let (conditionString, conditionValues) = pgRestriction condition
+            connection <- ask
+            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) ((pgRowInject row) :. conditionValues)
+            return ()
+
 class PGMakeUpdateString projection where
     pgMakeUpdateString :: projection -> String
 

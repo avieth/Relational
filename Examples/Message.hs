@@ -29,8 +29,10 @@ import Database.Relational.Schema
 import Database.Relational.Column
 import Database.Relational.Insert
 import Database.Relational.Values
+import Database.Relational.Value
 import Database.Relational.Project
 import Database.Relational.Update
+import Database.Relational.Restriction
 import Data.Proxy
 import Examples.PostgresUniverse
 import Examples.User
@@ -120,4 +122,6 @@ changeItUp uuid time viewed body = do
                  (TABLE messagesTable)
                  (timeColumn |: viewedColumn |: bodyColumn |: P)
                  (PGBigInteger time, PGBool viewed, PGText body)
+                 `WHERE`
+                 (COLUMN (Proxy :: Proxy (TableName MessagesTable)) uuidColumn .==. VALUE (PGUUID uuid))
     runPostgres messagesDatabase update

@@ -122,5 +122,8 @@ deleteAll = do
 
 deleteUuid :: UUID -> ReaderT Connection IO ()
 deleteUuid uuid = do
-    let deletion = DELETE_FROM (TABLE userTable) `WHERE` ((COLUMN (Proxy :: Proxy (TableName UserTable)) uuidColumn) .==. (VALUE (PGUUID uuid)))
+    let deletion = DELETE_FROM
+                   (TABLE userTable)
+                   `WHERE`
+                   ((COLUMN (Proxy :: Proxy (TableName UserTable)) uuidColumn) .==. (VALUE (PGUUID uuid)))
     runPostgres userDatabase deletion
