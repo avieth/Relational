@@ -38,6 +38,8 @@ import Database.Relational.From
 import Database.Relational.Select
 import Database.Relational.Project
 import Database.Relational.As
+import Database.Relational.Intersect
+import Database.Relational.Union
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
 import Data.Functor.Identity
@@ -137,6 +139,60 @@ selectAll = do
                     (FROM ((TABLE userTable)
                           `AS` 
                           (alias)
+                          )
+                    )
+    runPostgres userDatabase selection
+
+-- Silly query just to demonstrate intersection
+selectIntersect :: ReaderT Connection IO [Identity PGUUID]
+selectIntersect = do
+    let leftAlias :: Proxy '("left", '["uuid"])
+        leftAlias = Proxy
+    let rightAlias :: Proxy '("right", '["uuid"])
+        rightAlias = Proxy
+    let leftUuid :: Proxy '("left", UUIDColumn, "uuid")
+        leftUuid = Proxy
+    let rightUuid :: Proxy '("right", UUIDColumn, "uuid")
+        rightUuid = Proxy
+    let intersectAlias :: Proxy '("intersect", '["uuid"])
+        intersectAlias = Proxy
+    let intersectUuid :: Proxy '("intersect", UUIDColumn, "uuid")
+        intersectUuid = Proxy
+    let selection = SELECT
+                    (intersectUuid |: P)
+                    (FROM (((SELECT (leftUuid  |: P) (FROM ((TABLE userTable) `AS` leftAlias)))
+                           `INTERSECT`
+                           (SELECT (rightUuid |: P) (FROM ((TABLE userTable) `AS` rightAlias)))
+                          )
+                          `AS`
+                          (intersectAlias)
+                          )
+                    )
+    runPostgres userDatabase selection
+
+-- Silly query just to demonstrate union
+selectUnion :: ReaderT Connection IO [Identity PGUUID]
+selectUnion = do
+    let leftAlias :: Proxy '("left", '["uuid"])
+        leftAlias = Proxy
+    let rightAlias :: Proxy '("right", '["uuid"])
+        rightAlias = Proxy
+    let leftUuid :: Proxy '("left", UUIDColumn, "uuid")
+        leftUuid = Proxy
+    let rightUuid :: Proxy '("right", UUIDColumn, "uuid")
+        rightUuid = Proxy
+    let unionAlias :: Proxy '("union", '["uuid"])
+        unionAlias = Proxy
+    let unionUuid :: Proxy '("union", UUIDColumn, "uuid")
+        unionUuid = Proxy
+    let selection = SELECT
+                    (unionUuid |: P)
+                    (FROM (((SELECT (leftUuid  |: P) (FROM ((TABLE userTable) `AS` leftAlias)))
+                           `UNION`
+                           (SELECT (rightUuid |: P) (FROM ((TABLE userTable) `AS` rightAlias)))
+                          )
+                          `AS`
+                          (unionAlias)
                           )
                     )
     runPostgres userDatabase selection

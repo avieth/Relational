@@ -24,10 +24,12 @@ module Database.Relational.Project (
     , ProjectColumns
     , ProjectTableNames
     , ProjectAliases
+    , ProjectTypes
 
     ) where
 
 import Data.Proxy
+import Database.Relational.Column
 
 -- | Intended use: give a column and a table name for the left parameter, so as
 --   to resolve a column within a query ("my_table.my_column"), and then give
@@ -53,3 +55,7 @@ type family ProjectTableNames project where
 type family ProjectAliases project where
     ProjectAliases P = '[]
     ProjectAliases (PROJECT '(tableName, column, alias) rest) = alias ': (ProjectAliases rest)
+
+type family ProjectTypes project where
+    ProjectTypes P = '[]
+    ProjectTypes (PROJECT '(tableName, column, alias) rest) = ColumnType column ': ProjectTypes rest

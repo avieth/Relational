@@ -61,6 +61,8 @@ import Database.Relational.As
 import Database.Relational.FieldType
 import Database.Relational.RowType
 import Database.Relational.Into
+import Database.Relational.Intersect
+import Database.Relational.Union
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
@@ -469,6 +471,14 @@ instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8, t9) where
 instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) where
     pgRowIn = id
     pgRowOut = id
+instance
+    ( PGRow left
+    , PGRow right
+    ) => PGRow (left :. right)
+  where
+    type PGRowType (left :. right) = PGRowType left :. PGRowType right
+    pgRowIn (left :. right) = (pgRowIn left) :. (pgRowIn right)
+    pgRowOut (left :. right) = (pgRowOut left) :. (pgRowOut right)
 
 -- | A class indicating that some term can be interpreted inside
 --   PostgresUniverse.
@@ -522,6 +532,40 @@ class
 -- simply must ensure that there's AT MOST one limit and one offset per
 -- selecti. How? A type function indicator which reveals limited clauses?
 
+-- | The prefix alias from an alias.
+type family AliasAlias (alias :: (Symbol, [Symbol])) :: Symbol where
+    AliasAlias '(tableAlias, columnAliases) = tableAlias
+
+-- | The column names from an alias.
+type family AliasColumnAliases (alias :: (Symbol, [Symbol])) :: [Symbol] where
+    AliasColumnAliases '(tableAlias, columnAliases) = columnAliases
+
+-- | Merges an alias and a list of columns, pairing the aliased column names
+--   with their associated types.
+--   Gets "stuck" in case there is a mismatch in length.
+--   First parameter should be the prefix alias from an alias, and the second
+--   should be its column aliases (AliasAlias alias then AliasColumnAliases alias)
+type family TagFieldsUsingAlias (alias :: Symbol) (columnAliases :: [Symbol]) (fields :: [*]) :: [(Symbol, (Symbol, *))] where
+    TagFieldsUsingAlias alias '[] '[] = '[]
+    TagFieldsUsingAlias alias (a ': as) (f ': fs) = '(alias, '(a, f)) ': TagFieldsUsingAlias alias as fs
+
+-- | Given a PGSelectableForm and a projection from it, compute the row type,
+--   i.e. the thing you will actually get back if you run a select with this
+--   projection on this selectable.
+type family PGSelectableRowType project (selectableForm :: [(Symbol, (Symbol, *))]) :: [*] where
+    PGSelectableRowType P form = '[]
+    PGSelectableRowType (PROJECT left right) form = PGSelectableLookup left form ': PGSelectableRowType right form
+
+-- | Helper for PGSelectableRowType. Looks up the matching part of the
+--   selectable form, according to alias prefix and column alias.
+type family PGSelectableLookup (p :: (Symbol, (Symbol, *), Symbol)) (selectableForm :: [(Symbol, (Symbol, *))]) :: * where
+    PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, ty)) ': rest ) = ty
+    PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, ty)) ': rest ) = PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
+
+type family PGSelectableTypes (p :: [(Symbol, (Symbol, *))]) :: [*] where
+    PGSelectableTypes '[] = '[]
+    PGSelectableTypes ( '(alias, '(columnAlias, ty)) ': rest ) = ty ': PGSelectableTypes rest
+
 -- | Something FROM which we can select.
 --   It indicates the schema that will come out: a list of columns (names and
 --   types) with their aliases (prefix before a dot).
@@ -557,36 +601,6 @@ instance
             (AliasColumnAliases alias)
             (FieldTypes READ (TableSchema table) (SchemaColumns (TableSchema table)))
 
--- | The prefix alias from an alias.
-type family AliasAlias (alias :: (Symbol, [Symbol])) :: Symbol where
-    AliasAlias '(tableAlias, columnAliases) = tableAlias
-
--- | The column names from an alias.
-type family AliasColumnAliases (alias :: (Symbol, [Symbol])) :: [Symbol] where
-    AliasColumnAliases '(tableAlias, columnAliases) = columnAliases
-
--- | Merges an alias and a list of columns, pairing the aliased column names
---   with their associated types.
---   Gets "stuck" in case there is a mismatch in length.
---   First parameter should be the prefix alias from an alias, and the second
---   should be its column aliases (AliasAlias alias then AliasColumnAliases alias)
-type family TagFieldsUsingAlias (alias :: Symbol) (columnAliases :: [Symbol]) (fields :: [*]) :: [(Symbol, (Symbol, *))] where
-    TagFieldsUsingAlias alias '[] '[] = '[]
-    TagFieldsUsingAlias alias (a ': as) (f ': fs) = '(alias, '(a, f)) ': TagFieldsUsingAlias alias as fs
-
--- | Given a PGSelectableForm and a projection from it, compute the row type,
---   i.e. the thing you will actually get back if you run a select with this
---   projection on this selectable.
-type family PGSelectableRowType project (selectableForm :: [(Symbol, (Symbol, *))]) :: [*] where
-    PGSelectableRowType P form = '[]
-    PGSelectableRowType (PROJECT left right) form = PGSelectableLookup left form ': PGSelectableRowType right form
-
--- | Helper for PGSelectableRowType. Looks up the matching part of the
---   selectable form, according to alias prefix and column alias.
-type family PGSelectableLookup (p :: (Symbol, (Symbol, *), Symbol)) (selectableForm :: [(Symbol, (Symbol, *))]) :: * where
-    PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, ty)) ': rest ) = ty
-    PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, ty)) ': rest ) = PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
-
 -- | Here, the type of @values@ is determined by the alias columns, and the
 --   @PGSelectableForm@ are determined by both of them.
 --   In order for this to make sense, the @values@ must be a tuple (or Identity)
@@ -602,6 +616,64 @@ instance
             (AliasAlias alias)
             (AliasColumnAliases alias)
             (InverseRowType values)
+
+-- | For intersections, we demand that left and right are PGSelections (not
+--   PGSelectable) and with compatible forms (types coincide, but aliases may
+--   differ).
+--
+--   This will allows us to interpret
+--       SELECT
+--       project
+--       FROM (INTERSECT
+--            (SELECT .. )
+--            (SELECT .. )
+--            `AS`
+--            alias
+--
+--
+--   OR!!! We could just make a more elaborate pattern here
+--
+--      AS (INTERSECT (SELECT projectLeft (FROM selectable))
+--                    (SELECT projectRight (FROM selectable))
+--         )
+--      alias
+--
+--   This obviates the need for PGSelection class.
+instance
+    ( PGSelectable database selectableLeft
+    , PGSelectable database selectableRight
+    -- We can only intersect relations of the same form (types; aliases
+    -- are irrelevant).
+    , ProjectTypes projectLeft ~ ProjectTypes projectRight
+    ) => PGSelectable database (AS (INTERSECT (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) (alias :: (Symbol, [Symbol])))
+  where
+    -- This should be the types determined by left and right projections,
+    -- aliased by the AS alias here.
+    type PGSelectableForm database (AS (INTERSECT (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) alias) =
+        TagFieldsUsingAlias
+            (AliasAlias alias)
+            (AliasColumnAliases alias)
+            -- We can use projectLeft because
+            -- ProjectTypes projectLeft ~ ProjectTypes projectRight
+            (ProjectTypes projectLeft)
+
+instance
+    ( PGSelectable database selectableLeft
+    , PGSelectable database selectableRight
+    -- We can only intersect relations of the same form (types; aliases
+    -- are irrelevant).
+    , ProjectTypes projectLeft ~ ProjectTypes projectRight
+    ) => PGSelectable database (AS (UNION (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) (alias :: (Symbol, [Symbol])))
+  where
+    -- This should be the types determined by left and right projections,
+    -- aliased by the AS alias here.
+    type PGSelectableForm database (AS (UNION (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) alias) =
+        TagFieldsUsingAlias
+            (AliasAlias alias)
+            (AliasColumnAliases alias)
+            -- We can use projectLeft because
+            -- ProjectTypes projectLeft ~ ProjectTypes projectRight
+            (ProjectTypes projectLeft)
 
 instance
     ( WellFormedDatabase database
@@ -901,6 +973,58 @@ instance
                 parameters = values
             in  (queryString, parameters)
 
+instance
+    ( PGQuery left
+    , PGQuery right
+    , PGMakeProjectString project
+    , PGMakeAliasString alias
+    ) => PGQuery (SELECT project (FROM (AS (INTERSECT left right) alias)))
+  where
+    type PGQueryParameterType (SELECT project (FROM (AS (INTERSECT left right) alias))) =
+        (PGQueryParameterType left) :. (PGQueryParameterType right)
+    pgQuery term = case term of
+        SELECT project (FROM (AS (INTERSECT left right) alias)) ->
+            let (leftQueryString, leftParameters) = pgQuery left
+                (rightQueryString, rightParameters) = pgQuery right
+                queryString = concat [
+                      "SELECT "
+                    , pgMakeProjectString (Proxy :: Proxy project)
+                    , " FROM ("
+                    , leftQueryString
+                    , " INTERSECT "
+                    , rightQueryString
+                    , ") AS "
+                    , pgMakeAliasString (Proxy :: Proxy alias)
+                    ]
+                parameters = leftParameters :. rightParameters
+            in  (queryString, parameters)
+
+instance
+    ( PGQuery left
+    , PGQuery right
+    , PGMakeProjectString project
+    , PGMakeAliasString alias
+    ) => PGQuery (SELECT project (FROM (AS (UNION left right) alias)))
+  where
+    type PGQueryParameterType (SELECT project (FROM (AS (UNION left right) alias))) =
+        (PGQueryParameterType left) :. (PGQueryParameterType right)
+    pgQuery term = case term of
+        SELECT project (FROM (AS (UNION left right) alias)) ->
+            let (leftQueryString, leftParameters) = pgQuery left
+                (rightQueryString, rightParameters) = pgQuery right
+                queryString = concat [
+                      "SELECT "
+                    , pgMakeProjectString (Proxy :: Proxy project)
+                    , " FROM ("
+                    , leftQueryString
+                    , " UNION "
+                    , rightQueryString
+                    , ") AS "
+                    , pgMakeAliasString (Proxy :: Proxy alias)
+                    ]
+                parameters = leftParameters :. rightParameters
+            in  (queryString, parameters)
+
 class
     (
     ) => PGMakeRestriction term
@@ -1101,11 +1225,11 @@ instance {-# OVERLAPS #-}
     , KnownSymbol alias
     ) => PGMakeProjectStrings (PROJECT '(name, column, alias) P) where
     pgMakeProjectStrings _ = [concat [
-          symbolVal (Proxy :: Proxy name)
+          concat ["\"", symbolVal (Proxy :: Proxy name), "\""]
         , "."
-        , symbolVal (Proxy :: Proxy (ColumnName column))
+        , concat ["\"", symbolVal (Proxy :: Proxy (ColumnName column)), "\""]
         , " AS "
-        , symbolVal (Proxy :: Proxy alias)
+        , concat ["\"", symbolVal (Proxy :: Proxy alias), "\""]
         ]]
 
 instance {-# OVERLAPS #-}
@@ -1116,11 +1240,11 @@ instance {-# OVERLAPS #-}
     ) => PGMakeProjectStrings (PROJECT '(name, column, alias) rest)
   where
     pgMakeProjectStrings _ = concat [
-          symbolVal (Proxy :: Proxy name)
+          concat ["\"", symbolVal (Proxy :: Proxy name), "\""]
         , "."
-        , symbolVal (Proxy :: Proxy (ColumnName column))
+        , concat ["\"", symbolVal (Proxy :: Proxy (ColumnName column)), "\""]
         , " AS "
-        , symbolVal (Proxy :: Proxy alias)
+        , concat ["\"", symbolVal (Proxy :: Proxy alias), "\""]
         ] : pgMakeProjectStrings (Proxy :: Proxy rest)
 
 class
@@ -1135,7 +1259,7 @@ instance
     ) => PGMakeAliasString '(alias, aliases)
   where
     pgMakeAliasString _ = concat [
-           symbolVal (Proxy :: Proxy alias)
+           concat ["\"", symbolVal (Proxy :: Proxy alias), "\""]
          , " ("
          , concat (intersperse "," (pgMakeAliasStrings (Proxy :: Proxy aliases)))
          , ")"
@@ -1158,7 +1282,9 @@ instance
     , PGMakeAliasStrings rest
     ) => PGMakeAliasStrings (alias ': rest)
   where
-    pgMakeAliasStrings _ = symbolVal (Proxy :: Proxy alias) : pgMakeAliasStrings (Proxy :: Proxy rest)
+    pgMakeAliasStrings _ =
+          (concat ["\"", symbolVal (Proxy :: Proxy alias), "\""])
+        : pgMakeAliasStrings (Proxy :: Proxy rest)
 
 {-
 class
