@@ -37,6 +37,8 @@ module Database.Relational.Schema (
     , IsPrimaryKey
     , IsUnique
     , IsNotNull
+    , IsNullable
+    , IsDefault
     , ColumnIsOptional
 
     ) where
@@ -151,6 +153,13 @@ type family IsDefault columnName schema :: Bool where
     IsDefault columnName schema =
         Member columnName (SchemaDefault schema)
 
+type family IsNullable columnName schema :: Bool where
+    IsNullable columnName schema = All '[
+          Not (IsNotNull columnName schema)
+        , Not (IsPrimaryKey columnName schema)
+        , Not (IsForeignKey columnName schema)
+        ]
+
 -- To determine schema well-formedness, we need the name of the schema, the
 -- schema itself, and the database in which it lives. This is to be able to
 -- resolve foreign key well-formedness.
@@ -223,6 +232,8 @@ type family WellFormedNotNull notNull schema :: Constraint where
 
 -- | NB this is different from "can be null": a column with a default is
 --   optional.
+--
+--   TODO phase this out. Shouldn't be needed.
 type family ColumnIsOptional database schema column :: Bool where
     ColumnIsOptional database schema column = All '[
           Not (IsPrimaryKey (ColumnName column) schema)

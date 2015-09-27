@@ -9,6 +9,7 @@ Portability : non-portable (GHC only)
 -}
 
 {-# LANGUAGE AutoDeriveTypeable #-}
+{-# LANGUAGE PolyKinds #-}
 
 module Database.Relational.Select (
 

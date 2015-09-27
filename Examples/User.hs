@@ -29,6 +29,7 @@ import Database.Relational.Column
 import Database.Relational.ForeignKeyCycles
 import Database.Relational.Value.Database
 import Database.Relational.Insert
+import Database.Relational.Into
 import Database.Relational.Delete
 import Database.Relational.Values
 import Database.Relational.Value
@@ -36,6 +37,7 @@ import Database.Relational.Restrict
 import Database.Relational.From
 import Database.Relational.Select
 import Database.Relational.Project
+import Database.Relational.As
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
 import Data.Functor.Identity
@@ -103,19 +105,12 @@ uuidColumn = Proxy
 userDatabase :: Proxy UserDatabase
 userDatabase = Proxy
 
-insertThree :: ReaderT Connection IO ()
-insertThree = do
+insertNew :: ReaderT Connection IO ()
+insertNew = do
     u1 <- lift nextRandom
-    u2 <- lift nextRandom
-    u3 <- lift nextRandom
-    let insertion = INSERT_INTO
-                    (TABLE userTable)
-                    (VALUES [
-                          Identity (PGUUID u1)
-                        , Identity (PGUUID u2)
-                        , Identity (PGUUID u3)
-                        ]
-                    )
+    let insertion = INSERT
+                    (INTO (TABLE userTable))
+                    (VALUES (Identity (PGUUID u1)))
     runPostgres userDatabase insertion
 
 deleteAll :: ReaderT Connection IO ()
@@ -135,7 +130,13 @@ selectAll :: ReaderT Connection IO [Identity PGUUID]
 selectAll = do
     let uuid :: Proxy '("users", UUIDColumn, "uuid")
         uuid = Proxy
+    let alias :: Proxy '("users", '["uuid"])
+        alias = Proxy
     let selection = SELECT
                     (uuid |: P)
-                    (FROM (TABLE userTable))
+                    (FROM ((TABLE userTable)
+                          `AS` 
+                          (alias)
+                          )
+                    )
     runPostgres userDatabase selection

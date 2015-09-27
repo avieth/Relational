@@ -28,6 +28,7 @@ import Database.Relational.Table
 import Database.Relational.Schema
 import Database.Relational.Column
 import Database.Relational.Insert
+import Database.Relational.Into
 import Database.Relational.Values
 import Database.Relational.Value
 import Database.Relational.Project
@@ -97,15 +98,15 @@ insertMessage :: UUID -> UUID -> T.Text -> ReaderT Connection IO ()
 insertMessage sender receiver body = do
     messageId <- lift nextRandom
     let sendTime = 1
-    let insertion = INSERT_INTO
-                    (TABLE messagesTable)
-                    (VALUES [( PGUUID messageId
+    let insertion = INSERT
+                    (INTO (TABLE messagesTable))
+                    (VALUES ( PGUUID messageId
                             , PGUUID sender
                             , PGUUID receiver
                             , PGBigInteger sendTime
                             , PGBool False
                             , PGText body
-                            )]
+                            )
                     )
     runPostgres messagesDatabase insertion
 
@@ -129,6 +130,7 @@ changeItUp uuid time viewed body = do
                  (COLUMN (Proxy :: Proxy (TableName MessagesTable)) uuidColumn .==. VALUE (PGUUID uuid))
     runPostgres messagesDatabase update
 
+{-
 selectUnread :: ReaderT Connection IO [Identity PGUUID]
 selectUnread = do
     let uuid :: Proxy '("messages", UUIDColumn, "uuid")
@@ -139,3 +141,4 @@ selectUnread = do
                  `WHERE`
                  (COLUMN (Proxy :: Proxy (TableName MessagesTable)) viewedColumn .==. VALUE (PGBool False))
     runPostgres messagesDatabase select
+-}

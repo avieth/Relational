@@ -34,13 +34,13 @@ import Database.Relational.Schema
 -- A table is a named schema.
 type Table (name :: Symbol) schema = '(name, schema)
 
-data TABLE table where
+data TABLE (table :: (Symbol, ([(Symbol, *)], [Symbol], [([(Symbol, Symbol)], Symbol)], [Symbol], [Symbol], [Symbol], [Symbol]))) where
     TABLE :: Proxy table -> TABLE table
 
 type family TableName table :: Symbol where
     TableName '(name, schema) = name
 
-type family TableSchema table where
+type family TableSchema table :: ([(Symbol, *)], [Symbol], [([(Symbol, Symbol)], Symbol)], [Symbol], [Symbol], [Symbol], [Symbol]) where
     TableSchema '(name, schema) = schema
 
 type family WellFormedTable table database :: Constraint where

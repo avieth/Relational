@@ -36,6 +36,6 @@ data S = S
 infixr 8 \:
 (\:) = SUB
 
-type family SubColumns project where
+type family SubColumns sub where
     SubColumns S = '[]
     SubColumns (SUB column rest) = column ': (SubColumns rest)

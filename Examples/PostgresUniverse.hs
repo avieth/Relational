@@ -57,6 +57,10 @@ import Database.Relational.Value
 import Database.Relational.Values
 import Database.Relational.Restrict
 import Database.Relational.From
+import Database.Relational.As
+import Database.Relational.FieldType
+import Database.Relational.RowType
+import Database.Relational.Into
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
@@ -420,14 +424,20 @@ instance
 --
 --
 
--- Must pick up single-element inserts and updates and use Only, so as to obtain
--- the ToRow.
+-- | Must pick up single-element inserts and updates and use Only, so as to obtain
+--   the ToRow and FromRow instances.
+--   Happily, Relational's choice of tuples for rows of width n > 1 coincides
+--   with To/FromRow instances of postgresql-simple.
 class PGRow row where
     type PGRowType row :: *
     type PGRowType row = row
     pgRowIn :: row -> PGRowType row
     pgRowOut :: PGRowType row -> row
 
+instance PGRow () where
+    type PGRowType () = ()
+    pgRowIn = id
+    pgRowOut = id
 instance PGRow (Identity t) where
     type PGRowType (Identity t) = Only t
     pgRowIn (Identity t) = Only t
@@ -460,6 +470,8 @@ instance PGRow (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) where
     pgRowIn = id
     pgRowOut = id
 
+-- | A class indicating that some term can be interpreted inside
+--   PostgresUniverse.
 class
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
@@ -468,11 +480,157 @@ class
     type PostgresCodomain database term :: *
     runPostgres :: Proxy database -> term -> PostgresCodomain database term
 
+
+-- Plan for selection in the presence of joins, unions, intersections:
+-- we need some way to get the "schema" of a relation, i.e. the columns (their
+-- names, types, and alias) so that we can ensure it jives inside a composite.
+--
+--   -- For a SELECT it's simple: take the projection, drop all of its local
+--   -- aliases and alias the whole thing using the AS clause.
+--   RelSchema (SELECT projection (FROM (_)) `AS` alias) =
+--       AliasProjection alias projection
+--
+--   Compatible projection (RelSchema x)
+--   => Relation (SELECT projection FROM x `AS` alias)
+--
+-- The base selections:
+--    SELECT projection (FROM (TABLE table) `AS` aliasWithColumnNames)
+--    SELECT projection (FROM ((VALUES values) `AS` aliasWithColumnNames))
+-- When dumped to queries, they are unparenthesized as a whole, but the values
+-- variant has parens around the values clause.
+-- Safety is granted by ensuring the aliases are good references to the TABLE
+-- or VALUES and then that the projection includes only things from the alias.
+--
+-- The recursive selections:
+--    SELECT projection (FROM x `AS` aliasWithColumnNames)
+-- where x has a type giving its schema.
+--
+-- So I think what we want is a PGSelectable class, for the things which can
+-- go inside the FROM. It has an associated type PGSelectableForm, as
+-- determined by the aliases, and instances have constraints which ensure that
+-- the aliases are sane.
+--
+-- A note on syntax:
+--   SELECT projection ((FROM x) `AS` alias)
+--   SELECT projection (FROM (x `AS` alias))
+-- Which one should we use?
+-- Second makes more sense in my opinion.
+--
+-- A question to consider: how ensure we have at most one limit and offset per
+-- select, and that they always come above the select? Hm, no, limits and
+-- offsets can go after a select, and be nested in another select, but we
+-- simply must ensure that there's AT MOST one limit and one offset per
+-- selecti. How? A type function indicator which reveals limited clauses?
+
+-- | Something FROM which we can select.
+--   It indicates the schema that will come out: a list of columns (names and
+--   types) with their aliases (prefix before a dot).
+--
+--   Base cases:
+--     - selecting from a disk table (TABLE)
+--     - selecting from a literal values (VALUES).
+--
+--   Recursive cases:
+--     - selecting from any PGSelectable
+--     - selecting form any intersection of PGSelectables
+--     - selecting from any union of PGSelectables
+--     - selecting from any join of PGSelectables
+class PGSelectable database term where
+    -- PGSelectableForm gives the prefix alias, column alias, and read field
+    -- type. Do not confuse it with the column type! The read field type is
+    -- what you'll actually get out, not necessarily what is listed in some
+    -- schema.
+    type PGSelectableForm database term :: [(Symbol, (Symbol, *))]
+
+-- | The alias includes a table alias and aliases for every column, so we
+--   can just use that as the PGSelectableForm, after computing the read
+--   field type from the table's schema.
 instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (SELECT project (FROM (TABLE table)))
+    ) => PGSelectable database (AS (TABLE table) (alias :: (Symbol, [Symbol])))
+  where
+    type PGSelectableForm database (AS (TABLE table) alias) =
+        TagFieldsUsingAlias
+            (AliasAlias alias)
+            (AliasColumnAliases alias)
+            (FieldTypes READ (TableSchema table) (SchemaColumns (TableSchema table)))
+
+-- | The prefix alias from an alias.
+type family AliasAlias (alias :: (Symbol, [Symbol])) :: Symbol where
+    AliasAlias '(tableAlias, columnAliases) = tableAlias
+
+-- | The column names from an alias.
+type family AliasColumnAliases (alias :: (Symbol, [Symbol])) :: [Symbol] where
+    AliasColumnAliases '(tableAlias, columnAliases) = columnAliases
+
+-- | Merges an alias and a list of columns, pairing the aliased column names
+--   with their associated types.
+--   Gets "stuck" in case there is a mismatch in length.
+--   First parameter should be the prefix alias from an alias, and the second
+--   should be its column aliases (AliasAlias alias then AliasColumnAliases alias)
+type family TagFieldsUsingAlias (alias :: Symbol) (columnAliases :: [Symbol]) (fields :: [*]) :: [(Symbol, (Symbol, *))] where
+    TagFieldsUsingAlias alias '[] '[] = '[]
+    TagFieldsUsingAlias alias (a ': as) (f ': fs) = '(alias, '(a, f)) ': TagFieldsUsingAlias alias as fs
+
+-- | Given a PGSelectableForm and a projection from it, compute the row type,
+--   i.e. the thing you will actually get back if you run a select with this
+--   projection on this selectable.
+type family PGSelectableRowType project (selectableForm :: [(Symbol, (Symbol, *))]) :: [*] where
+    PGSelectableRowType P form = '[]
+    PGSelectableRowType (PROJECT left right) form = PGSelectableLookup left form ': PGSelectableRowType right form
+
+-- | Helper for PGSelectableRowType. Looks up the matching part of the
+--   selectable form, according to alias prefix and column alias.
+type family PGSelectableLookup (p :: (Symbol, (Symbol, *), Symbol)) (selectableForm :: [(Symbol, (Symbol, *))]) :: * where
+    PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, ty)) ': rest ) = ty
+    PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, ty)) ': rest ) = PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
+
+-- | Here, the type of @values@ is determined by the alias columns, and the
+--   @PGSelectableForm@ are determined by both of them.
+--   In order for this to make sense, the @values@ must be a tuple (or Identity)
+--   of appropriate length, at which points its components will be used to
+--   determine the column types.
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    ) => PGSelectable database (AS (VALUES values) (alias :: (Symbol, [Symbol])))
+  where
+    type PGSelectableForm database (AS (VALUES values) alias) =
+        TagFieldsUsingAlias
+            (AliasAlias alias)
+            (AliasColumnAliases alias)
+            (InverseRowType values)
+
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , PGQuery (SELECT project (FROM selectable))
+    , PGSelectable database selectable
+    , rowType ~ RowType (PGSelectableRowType project (PGSelectableForm database selectable))
+    , PGRow rowType
+    , FromRow (PGRowType rowType)
+
+    , PGRow (PGQueryParameterType (SELECT project (FROM selectable)))
+    , ToRow (PGRowType (PGQueryParameterType (SELECT project (FROM selectable))))
+
+    ) => RunPostgres database (SELECT project (FROM selectable))
+  where
+    type PostgresCodomain database (SELECT project (FROM selectable)) =
+        ReaderT Connection IO [RowType (PGSelectableRowType project (PGSelectableForm database selectable))]
+    runPostgres proxyDB term = do
+        let (queryString, parameters) = pgQuery term
+        connection <- ask
+        rows <- lift $ query connection (fromString queryString) (pgRowIn parameters)
+        return (fmap pgRowOut rows)
+
+{-
+instance
+    ( WellFormedDatabase database
+    , SafeDatabase database PostgresUniverse
+    , DatabaseHasTable database table
+    , PGQuery (SELECT project (FROM (TABLE table)))
     , Subset (ProjectColumns project) (SchemaColumns (TableSchema table)) ~ 'True
     , Subset (ProjectTableNames project) '[TableName table] ~ 'True
     , PGRow (LiteralRowType database (TableSchema table) (ProjectColumns project))
@@ -481,7 +639,7 @@ instance
   where
     type PostgresCodomain database (SELECT project (FROM (TABLE table))) = ReaderT Connection IO [LiteralRowType database (TableSchema table) (ProjectColumns project)]
     runPostgres proxyDB term = do
-        let queryString = fromString (pgQueryString term)
+        let queryString = fromString (pgQuery term)
         connection <- ask
         rows <- lift $ query connection queryString ()
         return (fmap pgRowOut rows)
@@ -490,7 +648,7 @@ instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (SELECT project (FROM (TABLE table)))
+    , PGQuery (SELECT project (FROM (TABLE table)))
     , Subset (ProjectColumns project) (SchemaColumns (TableSchema table)) ~ 'True
     , Subset (ProjectTableNames project) '[TableName table] ~ 'True
     , PGRow (LiteralRowType database (TableSchema table) (ProjectColumns project))
@@ -501,35 +659,35 @@ instance
     -- Must guarantee that the condition references only columns in the table.
     ) => RunPostgres database (WHERE (SELECT project (FROM (TABLE table))) condition)
   where
-    type PostgresCodomain database (WHERE (SELECT project (FROM (TABLE table))) condition) = ReaderT Connection IO [LiteralRowType database (TableSchema table) (ProjectColumns project)]
+    type PostgresCodomain database (WHERE (SELECT project (FROM (TABLE table))) condition) = ReaderT Connection IO [RowType database WRITE (TableSchema table) (ProjectColumns project)]
     runPostgres proxyDB term = case term of
         WHERE selectTerm condition -> do
-            let queryString = pgQueryString selectTerm
+            let queryString = pgQuery selectTerm
             let (conditionString, parameters) = pgRestriction condition
             connection <- ask
             rows <- lift $ query connection (fromString (concat [queryString, " WHERE ", conditionString])) parameters
             return (fmap pgRowOut rows)
+-}
 
 -- We know how to insert values into a table.
+-- You can only insert one row at a time.
 instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (INSERT_INTO (TABLE table) (VALUES values))
-    , values ~ [LiteralRowType database (TableSchema table) (SchemaColumns (TableSchema table))]
-    , PGRow (LiteralRowType database (TableSchema table) (SchemaColumns (TableSchema table)))
-    , ToRow (PGRowType (LiteralRowType database (TableSchema table) (SchemaColumns (TableSchema table))))
-    ) => RunPostgres database (INSERT_INTO (TABLE table) (VALUES values))
+    , PGQuery (INSERT (INTO (TABLE table)) (VALUES values))
+    , values ~ RowTypeColumns WRITE (TableSchema table) (SchemaColumns (TableSchema table))
+    , PGRow values
+    , ToRow (PGRowType values)
+    ) => RunPostgres database (INSERT (INTO (TABLE table)) (VALUES values))
   where
-    type PostgresCodomain database (INSERT_INTO (TABLE table) (VALUES values)) = ReaderT Connection IO ()
+    type PostgresCodomain database (INSERT (INTO (TABLE table)) (VALUES values)) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
-        INSERT_INTO (TABLE proxyTable) (VALUES values) -> do
-            let queryString = fromString (pgQueryString term)
+        INSERT (INTO (TABLE proxyTable)) (VALUES values) -> do
+            let (queryString, parameters) = pgQuery term
             connection <- ask
-            forM_ values (lift . execute connection queryString . pgRowIn)
-      where
-        proxyColumns :: Proxy (SchemaColumns (TableSchema table))
-        proxyColumns = Proxy
+            lift $ execute connection (fromString queryString) (pgRowIn parameters)
+            return ()
 
 -- We know how to delete values from a table.
 instance
@@ -542,9 +700,9 @@ instance
     type PostgresCodomain database (DELETE (FROM (TABLE table))) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
         DELETE (FROM (TABLE proxyTable)) -> do
-            let query = fromString (pgQueryString term)
+            let (queryString, parameters) = pgQuery term
             connection <- ask
-            lift $ execute_ connection query
+            lift $ execute connection (fromString queryString) parameters
             return ()
 
 -- We can delete with restriction.
@@ -552,7 +710,7 @@ instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (DELETE (FROM (TABLE table)))
+    , PGQuery (DELETE (FROM (TABLE table)))
     , PGMakeRestriction condition
     , ToRow (PGMakeRestrictionValue condition)
     ) => RunPostgres database (WHERE (DELETE (FROM (TABLE table))) condition)
@@ -560,10 +718,10 @@ instance
     type PostgresCodomain database (WHERE (DELETE (FROM (TABLE table))) condition) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
         WHERE delete condition -> do
-            let queryString = pgQueryString delete
-            let (conditionString, values) = pgRestriction condition
+            let (queryString, queryParameters) = pgQuery delete
+            let (conditionString, restrictParameters) = pgRestriction condition
             connection <- ask
-            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) values
+            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) (queryParameters :. restrictParameters)
             return ()
 
 -- We can update a table.
@@ -571,12 +729,12 @@ instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (UPDATE (TABLE table) sub row)
+    , PGQuery (UPDATE (TABLE table) sub row)
     -- We guarantee that we're updating a subset of the schema columns ...
     , Subset (SubColumns sub) (SchemaColumns (TableSchema table)) ~ 'True
     -- ... and also that the values we give to fill them in are of the right
     -- type.
-    , row ~ LiteralRowType database (TableSchema table) (SubColumns sub)
+    , row ~ RowTypeColumns WRITE (TableSchema table) (SubColumns sub)
     , PGRow row
     , ToRow (PGRowType row)
     ) => RunPostgres database (UPDATE (TABLE table) sub row)
@@ -584,9 +742,9 @@ instance
     type PostgresCodomain database (UPDATE (TABLE table) sub row) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
         UPDATE (TABLE proxyTable) sub row -> do
-            let queryString = pgQueryString term
+            let (queryString, parameters) = pgQuery term
             connection <- ask
-            lift $ execute connection (fromString queryString) (pgRowIn row)
+            lift $ execute connection (fromString queryString) (pgRowIn parameters)
             return ()
 
 -- We can update with restriction.
@@ -594,9 +752,9 @@ instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , DatabaseHasTable database table
-    , PGMakeQueryString (UPDATE (TABLE table) sub row)
+    , PGQuery (UPDATE (TABLE table) sub row)
     , Subset (SubColumns sub) (SchemaColumns (TableSchema table)) ~ 'True
-    , row ~ LiteralRowType database (TableSchema table) (SubColumns sub)
+    , row ~ RowTypeColumns WRITE (TableSchema table) (SubColumns sub)
     , PGRow row
     , ToRow (PGRowType row)
     , PGMakeRestriction condition
@@ -606,10 +764,10 @@ instance
     type PostgresCodomain database (WHERE (UPDATE (TABLE table) sub row) condition) = ReaderT Connection IO ()
     runPostgres proxyDB term = case term of
         WHERE update@(UPDATE (TABLE proxyTable) sub row) condition -> do
-            let queryString = pgQueryString update
-            let (conditionString, conditionValues) = pgRestriction condition
+            let (queryString, queryParameters) = pgQuery update
+            let (conditionString, restrictParameters) = pgRestriction condition
             connection <- ask
-            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) ((pgRowIn row) :. conditionValues)
+            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) ((pgRowIn queryParameters) :. restrictParameters)
             return ()
 
 class PGMakeUpdateString sub where
@@ -647,60 +805,101 @@ instance {-# OVERLAPS #-}
 -- be restricted.
 class
     (
-    ) => PGMakeQueryString term
+    ) => PGQuery term
   where
-    pgQueryString :: term -> String
+    type PGQueryParameterType term :: *
+    pgQuery :: term -> (String, PGQueryParameterType term)
 
 instance
     ( KnownSymbol (TableName table)
     , PGMakeValuesString (SchemaColumns (TableSchema table))
-    ) => PGMakeQueryString (INSERT_INTO (TABLE table) t)
+    , values ~ RowTypeColumns WRITE (TableSchema table) (SchemaColumns (TableSchema table))
+    ) => PGQuery (INSERT (INTO (TABLE table)) (VALUES values))
   where
-    pgQueryString term = case term of
-        INSERT_INTO (TABLE proxyTable) _ -> concat [
-              "INSERT INTO "
-            , symbolVal (Proxy :: Proxy (TableName table))
-            , " VALUES "
-            , pgMakeValuesString (Proxy :: Proxy (SchemaColumns (TableSchema table)))
-            ]
+    type PGQueryParameterType (INSERT (INTO (TABLE tabl)) (VALUES values)) = values
+    pgQuery term = case term of
+        INSERT (INTO (TABLE proxyTable)) (VALUES values) ->
+            let queryString = concat [
+                      "INSERT INTO "
+                    , symbolVal (Proxy :: Proxy (TableName table))
+                    , " VALUES "
+                    , pgMakeValuesString (Proxy :: Proxy (SchemaColumns (TableSchema table)))
+                    ]
+                parameters = values
+            in  (queryString, parameters)
 
 instance
     ( KnownSymbol (TableName table)
-    ) => PGMakeQueryString (DELETE (FROM (TABLE table)))
+    ) => PGQuery (DELETE (FROM (TABLE table)))
   where
-    pgQueryString term = case term of
-        DELETE (FROM (TABLE proxyTable)) -> concat [
-              "DELETE FROM "
-            , symbolVal (Proxy :: Proxy (TableName table))
-            ]
+    type PGQueryParameterType (DELETE (FROM (TABLE table))) = ()
+    pgQuery term = case term of
+        DELETE (FROM (TABLE proxyTable)) ->
+            let queryString = concat [
+                      "DELETE FROM "
+                    , symbolVal (Proxy :: Proxy (TableName table))
+                    ]
+                parameters = ()
+            in  (queryString, parameters)
 
 instance
     ( KnownSymbol (TableName table)
-    , PGMakeUpdateString sub 
-    ) => PGMakeQueryString (UPDATE (TABLE table) sub row)
+    , PGMakeUpdateString sub
+    , values ~ RowTypeColumns WRITE (TableSchema table) (SubColumns sub)
+    ) => PGQuery (UPDATE (TABLE table) sub values)
   where
-    pgQueryString term = case term of
-        UPDATE (TABLE proxyTable) project row -> concat [
-              "UPDATE "
-            , symbolVal (Proxy :: Proxy (TableName table))
-            , " SET "
-            , updateString
-            ]
-          where
-            updateString = pgMakeUpdateString project
+    type PGQueryParameterType (UPDATE (TABLE table) sub values) = values
+    pgQuery term = case term of
+        UPDATE (TABLE proxyTable) project values ->
+            let updateString = pgMakeUpdateString project
+                queryString = concat [
+                      "UPDATE "
+                    , symbolVal (Proxy :: Proxy (TableName table))
+                    , " SET "
+                    , updateString
+                    ]
+                parameters = values
+            in  (queryString, parameters)
 
 instance
     ( KnownSymbol (TableName table)
     , PGMakeProjectString project
-    ) => PGMakeQueryString (SELECT project (FROM (TABLE table)))
+    , PGMakeAliasString alias
+    ) => PGQuery (SELECT project (FROM (AS (TABLE table) alias)))
   where
-    pgQueryString term = case term of
-        SELECT project (FROM (TABLE proxyTable)) -> concat [
-              "SELECT "
-            , pgMakeProjectString (Proxy :: Proxy project)
-            , " FROM "
-            , symbolVal (Proxy :: Proxy (TableName table))
-            ]
+    type PGQueryParameterType (SELECT project (FROM (AS (TABLE table) alias))) = ()
+    pgQuery term = case term of
+        SELECT project (FROM (AS (TABLE proxyTable) alias)) ->
+            let queryString = concat [
+                      "SELECT "
+                    , pgMakeProjectString (Proxy :: Proxy project)
+                    , " FROM "
+                    , symbolVal (Proxy :: Proxy (TableName table))
+                    , " AS "
+                    , pgMakeAliasString (Proxy :: Proxy alias)
+                    ]
+                parameters = ()
+            in  (queryString, parameters)
+
+instance
+    ( PGMakeValuesString (InverseRowType values)
+    , PGMakeProjectString project
+    , PGMakeAliasString alias
+    ) => PGQuery (SELECT project (FROM (AS (VALUES values) alias)))
+  where
+    type PGQueryParameterType (SELECT project (FROM (AS (VALUES values) alias))) = values
+    pgQuery term = case term of
+        SELECT project (FROM (AS (VALUES values) alias)) ->
+            let queryString = concat [
+                      "SELECT "
+                    , pgMakeProjectString (Proxy :: Proxy project)
+                    , " FROM "
+                    , pgMakeValuesString (Proxy :: Proxy (InverseRowType values))
+                    , " AS "
+                    , pgMakeAliasString (Proxy :: Proxy alias)
+                    ]
+                parameters = values
+            in  (queryString, parameters)
 
 class
     (
@@ -923,3 +1122,108 @@ instance {-# OVERLAPS #-}
         , " AS "
         , symbolVal (Proxy :: Proxy alias)
         ] : pgMakeProjectStrings (Proxy :: Proxy rest)
+
+class
+    (
+    ) => PGMakeAliasString alias
+  where
+    pgMakeAliasString :: Proxy alias -> String
+
+instance
+    ( KnownSymbol alias
+    , PGMakeAliasStrings aliases
+    ) => PGMakeAliasString '(alias, aliases)
+  where
+    pgMakeAliasString _ = concat [
+           symbolVal (Proxy :: Proxy alias)
+         , " ("
+         , concat (intersperse "," (pgMakeAliasStrings (Proxy :: Proxy aliases)))
+         , ")"
+         ]
+
+class
+    (
+    ) => PGMakeAliasStrings aliases
+  where
+    pgMakeAliasStrings :: Proxy aliases -> [String]
+
+instance
+    (
+    ) => PGMakeAliasStrings '[]
+  where
+    pgMakeAliasStrings _ = []
+
+instance
+    ( KnownSymbol alias
+    , PGMakeAliasStrings rest
+    ) => PGMakeAliasStrings (alias ': rest)
+  where
+    pgMakeAliasStrings _ = symbolVal (Proxy :: Proxy alias) : pgMakeAliasStrings (Proxy :: Proxy rest)
+
+{-
+class
+    (
+    ) => PGMakeValuesWildcardString values
+  where
+    pgMakeValuesWildcardString :: Proxy values -> String
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (Identity t)
+  where
+    pgMakeValuesWildcardString _ = "(?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2)
+  where
+    pgMakeValuesWildcardString _ = "(?,?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2, t3)
+  where
+    pgMakeValuesWildcardString _ = "(?,?,?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2, t3, t4)
+  where
+    pgMakeValuesWildcardString _ = "(?,?,?,?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5)
+  where
+    pgMakeValuesWildcardString _ = "(?,?,?,?,?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6)
+  where
+    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6, t7)
+  where
+    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?,?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6, t7, t8)
+  where
+    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?,?,?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6, t7, t8, t9)
+  where
+    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?,?,?,?)"
+
+instance
+    (
+    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10)
+  where
+    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?,?,?,?,?)"
+-}

@@ -1,6 +1,6 @@
 {-|
-Module      : Database.Relational.Insert
-Description : Definition of INSERT_INTO.
+Module      : Database.Relational.Into
+Description : Definition of INTO.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
@@ -10,10 +10,10 @@ Portability : non-portable (GHC only)
 
 {-# LANGUAGE AutoDeriveTypeable #-}
 
-module Database.Relational.Insert (
+module Database.Relational.Into (
 
-      INSERT(..)
+      INTO(..)
 
     ) where
 
-data INSERT term target = INSERT term target
+data INTO term = INTO term
