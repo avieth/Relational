@@ -25,16 +25,21 @@ Portability : non-portable (GHC only)
 
 module Examples.PostgresUniverse where
 
-import GHC.TypeLits (Symbol, KnownSymbol, symbolVal)
+import GHC.TypeLits (Symbol, KnownSymbol, symbolVal, Nat, KnownNat, natVal)
 import Control.Monad (forM_)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
 import Data.Constraint
 import Data.Functor.Identity
 import Data.Proxy
-import Data.String (fromString)
+import Data.String (fromString, IsString)
 import Data.List (intersperse)
+import Data.Monoid
 import Types.Subset
+import Types.Unique
+import Types.Equal
+import Types.Append
+import Types.Member
 import Database.Relational.Safe
 import Database.Relational.Universe
 import Database.Relational.Database
@@ -63,12 +68,21 @@ import Database.Relational.RowType
 import Database.Relational.Into
 import Database.Relational.Intersect
 import Database.Relational.Union
+import Database.Relational.Join
+import Database.Relational.Limit
+import Database.Relational.Offset
+import Database.Relational.Count
+import Database.Relational.Group
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
 import Data.UUID (UUID)
 import qualified Data.Text as T
+import qualified Data.Text.Lazy.Builder as BT
 import Data.Int
+
+-- |
+-- = Types
 
 data PostgresUniverse
 
@@ -114,9 +128,15 @@ instance PostgresUniverseConstraint PGText where
 instance RelationalUniverse PostgresUniverse where
     type RelationalUniverseConstraint PostgresUniverse = PostgresUniverseConstraint
 
+-- |
+-- = Database and table creation
+--
 -- Creating a database proceeds as follows:
 -- - Create all tables and add their columns, without its schema's constraints.
 -- - For each table, add all of its schema's constraints.
+--
+-- TODO slight refactor, in which we factor out query generation into some
+-- monoid m. This is to be consistent with query generation.
 
 createDatabase
     :: forall database tables .
@@ -300,131 +320,858 @@ foreignKeyReferenceColumnsStrings foreignKeyReferenced = case foreignKeyReferenc
           (symbolVal (Proxy :: Proxy (ForeignKeyReferenceLocal ref)), symbolVal (Proxy :: Proxy (ForeignKeyReferenceForeign ref)))
         : (foreignKeyReferenceColumnsStrings rest)
 
+-- |
+-- = Generating queries
+--
+-- Definition of some typeclasses and instances for producing (what should be)
+-- ANSI SQL.
+--
+-- TODO moving forward, we will find that the ability to make a query from
+-- some datatype depends upon the universe. For instance, a PostGIS universe
+-- will have restriction operators which are not known to or compatible with
+-- a basic PostgreSQL universe.
 
-
-{- Pretty sure this stuff ain't necessary. Will keep it around, though, since
- - it is a lot of text.
- -
--- These are used as constraints in PGInsertLiteralRow instances to get a hold
--- of a ToField constraint on whatever the literal row field type is: either
--- ty or Maybe ty, depending on isOptional.
+-- | A class for producing query strings, where the string is actually any
+--   monoid (perhaps a text or bytestring builder).
+--   Instance of this class shall collectively provide us with the means to
+--   produce SQL query strings, but many of the possibilities will be bogus.
+--   It's the responsibility of the user of these classes to ensure that only
+--   correct query strings are built (e.g. we can make a query string for
+--   a where-qualified insertion, but that should never be used).
 class
-    ( ToField (LiteralFieldType column isOptional)
-    , FromField (LiteralFieldType column isOptional)
-    ) => PGLiteralFieldConstraint column isOptional
-instance PostgresUniverseConstraint ty => PGLiteralFieldConstraint '(name, ty) True
-instance PostgresUniverseConstraint ty => PGLiteralFieldConstraint '(name, ty) False
-
--- Parts of the insertion process depend upon the columns and schema:
---   how many ?s to place and
---   the type of the thing to call execute with, which postgresql-simple needs
---     to know concretely.
-class PGInsertLiteralRow database table columns where
-    pgInsertLiteralRow
-        :: Proxy database
-        -> Proxy table
-        -> Proxy columns
-        -> LiteralRowType database (TableSchema table) columns
-        -> ReaderT Connection IO ()
-
-commonInsertPrefix
-    :: forall table .
-       ( KnownSymbol (TableName table) )
-    => Proxy table
-    -> String
-commonInsertPrefix _ = concat [
-      "INSERT INTO "
-    , symbolVal (Proxy :: Proxy (TableName table))
-    , " VALUES "
-    ]
+    (
+    ) => MakeQuery term m
+  where
+    makeQuery :: term -> m
 
 instance
-    ( KnownSymbol (TableName table)
-    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    ) => PGInsertLiteralRow database table '[ c1 ]
+    ( Monoid m
+    , IsString m
+    , MakeUpdateClauses (SUB left right) m
+    ) => MakeQuery (SUB left right) m
   where
-    pgInsertLiteralRow _ proxyTable _ term = case term of
-        value -> do connection <- ask
-                    let statement = concat [commonInsertPrefix proxyTable, "(?)"]
-                    lift $ execute connection (fromString statement) (Only (runIdentity value))
-                    return ()
+    makeQuery term = mconcat (intersperse (fromString ", ") (makeUpdateClauses term))
+
+-- Given a suitable thing (a PROJECT, as the instances show), make a list of
+-- strings where each string gives an assignment of some column name to a
+-- question mark.
+class
+    (
+    ) => MakeUpdateClauses sub m
+  where
+    makeUpdateClauses :: sub -> [m]
+
+instance {-# OVERLAPS #-}
+    ( Monoid m
+    , IsString m
+    , KnownSymbol (ColumnName column)
+    ) => MakeUpdateClauses (SUB column S) m
+  where
+    makeUpdateClauses _ = [mconcat [
+          fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
+        , " = ?"
+        ]]
+
+instance {-# OVERLAPS #-}
+    ( Monoid m
+    , IsString m
+    , KnownSymbol (ColumnName column)
+    , MakeUpdateClauses rest m
+    ) => MakeUpdateClauses (SUB column rest) m
+  where
+    makeUpdateClauses (SUB _ rest) = mconcat [
+          (fromString (symbolVal (Proxy :: Proxy (ColumnName column))))
+        , " = ?"
+        ] : makeUpdateClauses rest
+
+
+-- To make a string of 0 or more ?, separated by columns and enclosed by
+-- parens, as we would use when doing an insertion.
+instance
+    ( Monoid m
+    , IsString m
+    , MakeValuesClauses (InverseRowType values) m
+    ) => MakeQuery (VALUES values) m
+  where
+    makeQuery proxy = mconcat [
+          fromString "("
+        , mconcat (intersperse (fromString ", ") (makeValuesClauses (Proxy :: Proxy (InverseRowType values))))
+        , fromString ")"
+        ]
+
+class MakeValuesClauses columns m where
+    makeValuesClauses :: Proxy columns -> [m]
+
+instance MakeValuesClauses '[] m where
+    makeValuesClauses _ = []
 
 instance
-    ( KnownSymbol (TableName table)
-    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    ) => PGInsertLiteralRow database table '[ c1, c2 ]
+    ( IsString m
+    , MakeValuesClauses cs m
+    ) => MakeValuesClauses (c ': cs) m
   where
-    pgInsertLiteralRow _ proxyTable _ term = case term of
-        values -> do connection <- ask
-                     let statement = concat [commonInsertPrefix proxyTable, "(?,?)"]
-                     lift $ execute connection (fromString statement) values
-                     return ()
+    makeValuesClauses _ = (fromString "?") : makeValuesClauses (Proxy :: Proxy cs)
 
 instance
-    ( KnownSymbol (TableName table)
-    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    , PGLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
-    ) => PGInsertLiteralRow database table '[ c1, c2, c3 ]
+    ( Monoid m
+    , IsString m
+    , MakeProjectClauses (PROJECT left right) m
+    ) => MakeQuery (PROJECT left right) m
   where
-    pgInsertLiteralRow _ proxyTable _ term = case term of
-        values -> do connection <- ask
-                     let statement = concat [commonInsertPrefix proxyTable, "(?,?,?)"]
-                     lift $ execute connection (fromString statement) values
-                     return ()
+    makeQuery term = mconcat (intersperse (fromString ", ") (makeProjectClauses (Proxy :: Proxy (PROJECT left right))))
+
+class MakeProjectClauses project m where
+    makeProjectClauses :: Proxy project -> [m]
 
 instance
-    ( KnownSymbol (TableName table)
-    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    , PGLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
-    , PGLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
-    ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4 ]
+    (
+    ) => MakeProjectClauses P m
   where
-    pgInsertLiteralRow _ proxyTable _ term = case term of
-        values -> do connection <- ask
-                     let statement = concat [commonInsertPrefix proxyTable, "(?,?,?,?)"]
-                     lift $ execute connection (fromString statement) values
-                     return ()
+    makeProjectClauses _ = []
+
+instance {-# OVERLAPS #-}
+    ( Monoid m
+    , IsString m
+    , KnownSymbol name
+    , KnownSymbol (ColumnName column)
+    , KnownSymbol alias
+    , MakeProjectClauses rest m
+    ) => MakeProjectClauses (PROJECT (AS (COLUMN '(name, column)) alias) rest) m where
+    makeProjectClauses _ = mconcat [
+          mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy name)), fromString "\""]
+        , fromString "."
+        , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy (ColumnName column))), fromString "\""]
+        , fromString " AS "
+        , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy alias)), fromString "\""]
+        ] : makeProjectClauses (Proxy :: Proxy rest)
+
+instance {-# OVERLAPS #-}
+    ( Monoid m
+    , IsString m
+    , KnownSymbol alias
+    , MakeProjectClauses rest m
+    , MakeColumnsClauses columns m
+    ) => MakeProjectClauses (PROJECT (AS (COUNT (COLUMNS columns)) alias) rest) m
+  where
+    makeProjectClauses _ = mconcat [
+          fromString "COUNT("
+        , mconcat (intersperse (fromString ", ") (makeColumnsClauses (Proxy :: Proxy columns)))
+        , fromString ") AS "
+        , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy alias)), fromString "\""]
+        ] : makeProjectClauses (Proxy :: Proxy rest)
+
+
+class
+    (
+    ) => MakeColumnsClauses columns m
+  where
+    makeColumnsClauses :: Proxy columns -> [m]
 
 instance
-    ( KnownSymbol (TableName table)
-    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    , PGLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
-    , PGLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
-    , PGLiteralFieldConstraint c5 (ColumnIsOptional database (TableSchema table) c5)
-    ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4, c5 ]
+    (
+    ) => MakeColumnsClauses '[] m
   where
-    pgInsertLiteralRow _ proxyTable _ term = case term of
-        values -> do connection <- ask
-                     let statement = concat [commonInsertPrefix proxyTable, "(?,?,?,?,?)"]
-                     lift $ execute connection (fromString statement) values
-                     return ()
+    makeColumnsClauses _ = []
 
 instance
-    ( KnownSymbol (TableName table)
-    , PGLiteralFieldConstraint c1 (ColumnIsOptional database (TableSchema table) c1)
-    , PGLiteralFieldConstraint c2 (ColumnIsOptional database (TableSchema table) c2)
-    , PGLiteralFieldConstraint c3 (ColumnIsOptional database (TableSchema table) c3)
-    , PGLiteralFieldConstraint c4 (ColumnIsOptional database (TableSchema table) c4)
-    , PGLiteralFieldConstraint c5 (ColumnIsOptional database (TableSchema table) c5)
-    , PGLiteralFieldConstraint c6 (ColumnIsOptional database (TableSchema table) c6)
-    ) => PGInsertLiteralRow database table '[ c1, c2, c3, c4, c5, c6 ]
+    ( Monoid m
+    , IsString m
+    , KnownSymbol tableName
+    , KnownSymbol (ColumnName column)
+    , MakeColumnsClauses cs m
+    ) => MakeColumnsClauses ( '(tableName, column) ': cs) m
   where
-    pgInsertLiteralRow _ proxyTable _ term = case term of
-        values -> do connection <- ask
-                     let statement = concat [commonInsertPrefix proxyTable, "(?,?,?,?,?,?)"]
-                     lift $ execute connection (fromString statement) values
-                     return ()
--}
+    makeColumnsClauses _ = mconcat [
+          fromString "\""
+        , fromString (symbolVal (Proxy :: Proxy tableName))
+        , fromString "\".\""
+        , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
+        , fromString "\""
+        ] : makeColumnsClauses (Proxy :: Proxy cs)
 
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol (TableName table)
+    ) => MakeQuery (TABLE table) m
+  where
+    makeQuery (TABLE proxyTable) = mconcat [
+          fromString "\""
+        , fromString (symbolVal (Proxy :: Proxy (TableName table)))
+        , fromString "\""
+        ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery values m
+    , MakeQuery table m
+    ) => MakeQuery (INSERT (INTO table) values) m
+  where
+    makeQuery term = case term of
+        INSERT (INTO table) values ->
+            let queryString = mconcat [
+                      (fromString "INSERT INTO ")
+                    , makeQuery table
+                    , (fromString " VALUES ")
+                    , makeQuery values
+                    ]
+            in  queryString
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery table m
+    , MakeQuery sub m
+    ) => MakeQuery (UPDATE table sub values) m
+  where
+    makeQuery term = case term of
+        UPDATE table sub values -> mconcat [
+              (fromString "UPDATE ")
+            , makeQuery table
+            , (fromString " SET ")
+            , makeQuery sub
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery table m
+    ) => MakeQuery (DELETE (FROM table)) m
+  where
+    makeQuery term = case term of
+        DELETE (FROM table) ->
+            let queryString = mconcat [
+                      (fromString "DELETE FROM ")
+                    , makeQuery table
+                    ]
+            in  queryString
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery project m
+    , MakeQuery from m
+    ) => MakeQuery (SELECT project (FROM from)) m
+  where
+    makeQuery term = case term of
+        SELECT project (FROM from) ->
+            let queryString = mconcat [
+                      (fromString "SELECT ")
+                    , makeQuery project
+                    , (fromString " FROM ")
+                    , makeQuery from
+                    ]
+            in  queryString
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (INTERSECT left right) m
+  where
+    makeQuery term = case term of
+        INTERSECT left right -> mconcat [
+              makeQuery left
+            , fromString " INTERSECT "
+            , makeQuery right
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (UNION left right) m
+  where
+    makeQuery term = case term of
+        UNION left right -> mconcat [
+              makeQuery left
+            , fromString " UNION "
+            , makeQuery right
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (JOIN left right) m
+  where
+    makeQuery term = case term of
+        JOIN left right -> mconcat [
+              makeQuery left
+            , fromString " JOIN "
+            , makeQuery right
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (ON left right) m
+  where
+    makeQuery term = case term of
+        ON left right -> mconcat [
+              makeQuery left
+            , fromString " ON "
+            , makeQuery right
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol (TableName table)
+    , MakeTableAliasClause alias m
+    ) => MakeQuery (AS (TABLE table) alias) m
+  where
+    makeQuery term = case term of
+        AS _ _ -> mconcat [
+              (fromString (symbolVal (Proxy :: Proxy (TableName table))))
+            , (fromString " AS ")
+            , makeTableAliasClause (Proxy :: Proxy alias)
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery (VALUES values) m
+    , MakeTableAliasClause alias m
+    ) => MakeQuery (AS (VALUES values) alias) m
+  where
+    makeQuery term = case term of
+        AS values alias -> mconcat [
+              (fromString "(")
+            , makeQuery values
+            , (fromString ") AS ")
+            , makeTableAliasClause (Proxy :: Proxy alias)
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeTableAliasClause alias m
+    , MakeQuery (SELECT project (FROM thing)) m
+    ) => MakeQuery (AS (SELECT project (FROM thing)) alias) m
+  where
+    makeQuery term = case term of
+        AS something _ -> mconcat [
+              (fromString "(")
+            , makeQuery something
+            , (fromString ") AS ")
+            , makeTableAliasClause (Proxy :: Proxy alias)
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery clause m
+    , MakeQuery restriction m
+    ) => MakeQuery (WHERE clause restriction) m
+  where
+    makeQuery term = case term of
+        WHERE clause restriction ->
+            let queryString = mconcat [
+                      makeQuery clause
+                    , (fromString " WHERE ")
+                    , makeQuery restriction
+                    ]
+            in  queryString
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery term m
+    , KnownNat nat
+    ) => MakeQuery (LIMIT term nat) m
+  where
+    makeQuery term = case term of
+        LIMIT limited proxyNat -> mconcat [
+              makeQuery limited
+            , fromString " LIMIT "
+            , fromString (show (natVal proxyNat))
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery term m
+    , KnownNat nat
+    ) => MakeQuery (OFFSET term nat) m
+  where
+    makeQuery term = case term of
+        OFFSET offset proxyNat -> mconcat [
+              makeQuery offset
+            , fromString " OFFSET "
+            , fromString (show (natVal proxyNat))
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery term m
+    , MakeColumnsClauses columns m
+    ) => MakeQuery (GROUP_BY term (COLUMNS columns)) m
+  where
+    makeQuery term = case term of
+        GROUP_BY term columns -> mconcat [
+              makeQuery term
+            , fromString " GROUP BY "
+            , mconcat (intersperse (fromString ", ") (makeColumnsClauses (Proxy :: Proxy columns)))
+            ]
+
+
+instance
+    ( IsString m
+    ) => MakeQuery (VALUE ty) m
+  where
+    makeQuery (VALUE x) = fromString "?"
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol columnName
+    , KnownSymbol tableName
+    ) => MakeQuery (COLUMN '(tableName, '(columnName, ty))) m
+  where
+    makeQuery _ = mconcat [
+          fromString "\""
+        , fromString (symbolVal (Proxy :: Proxy tableName))
+        , fromString "\".\""
+        , fromString (symbolVal (Proxy :: Proxy columnName))
+        , fromString "\""
+        ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (AND left right) m
+  where
+    makeQuery (AND left right) = mconcat [
+          fromString "("
+        , makeQuery left
+        , fromString ") AND ("
+        , makeQuery right
+        , fromString ")"
+        ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (OR left right) m
+  where
+    makeQuery (OR left right) = mconcat [
+          fromString "("
+        , makeQuery left
+        , fromString ") OR ("
+        , makeQuery right
+        , fromString ")"
+        ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery term m
+    ) => MakeQuery (NOT term) m
+  where
+    makeQuery (NOT term) = mconcat [
+          fromString "NOT ("
+        , makeQuery term
+        , fromString ")"
+        ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (EQUAL left right) m
+  where
+    makeQuery (EQUAL left right) = mconcat [
+          fromString "("
+        , makeQuery left
+        , fromString ") = ("
+        , makeQuery right
+        , fromString ")"
+        ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (LESSTHAN left right) m
+  where
+    makeQuery (LESSTHAN left right) = mconcat [
+          fromString "("
+        , makeQuery left
+        , fromString ") < ("
+        , makeQuery right
+        , fromString ")"
+        ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery left m
+    , MakeQuery right m
+    ) => MakeQuery (GREATERTHAN left right) m
+  where
+    makeQuery (GREATERTHAN left right) = mconcat [
+          fromString "("
+        , makeQuery left
+        , fromString ") > ("
+        , makeQuery right
+        , fromString ")"
+        ]
+
+-- | This class is for generating a table alias clause: table alias plus aliases
+--   for its columns.
+--   We don't use MakeQuery for the aliases because they don't have their
+--   own types like PROJECT, SUB, or VALUES; they are just any type of kind
+--   (Symbol, [Symbol]).
+class
+    (
+    ) => MakeTableAliasClause alias m
+  where
+    makeTableAliasClause :: Proxy alias -> m
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol alias
+    , MakeTableAliasClauses aliases m
+    ) => MakeTableAliasClause '(alias, aliases) m
+  where
+    makeTableAliasClause _ = mconcat [
+           mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy alias)), fromString "\""]
+         , (fromString " (")
+         , mconcat (intersperse (fromString ",") (makeTableAliasClauses (Proxy :: Proxy aliases)))
+         , (fromString ")")
+         ]
+
+class
+    (
+    ) => MakeTableAliasClauses aliases m
+  where
+    makeTableAliasClauses :: Proxy aliases -> [m]
+
+instance
+    (
+    ) => MakeTableAliasClauses '[] m
+  where
+    makeTableAliasClauses _ = []
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol alias
+    , MakeTableAliasClauses rest m
+    ) => MakeTableAliasClauses (alias ': rest) m
+  where
+    makeTableAliasClauses _ =
+          (mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy alias)), fromString "\""])
+        : makeTableAliasClauses (Proxy :: Proxy rest)
+
+
+-- |
+-- Query parameter production
+
+-- | Some queries require parameter substitution.
+class MakeQueryParameters universe term where
+    type QueryParametersType universe term :: *
+    makeQueryParameters
+        :: Proxy universe
+        -> term
+        -> QueryParametersType universe term
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (TABLE table)
+  where
+    type QueryParametersType PostgresUniverse (TABLE table) = ()
+    makeQueryParameters _ _ = ()
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (VALUES values)
+  where
+    type QueryParametersType PostgresUniverse (VALUES values) = values
+    makeQueryParameters _ term = case term of
+        VALUES values -> values
+
+instance
+    ( MakeQueryParameters PostgresUniverse inserting
+    ) => MakeQueryParameters PostgresUniverse (INSERT (INTO (TABLE table)) inserting)
+  where
+    type QueryParametersType PostgresUniverse (INSERT (INTO (TABLE table)) inserting) =
+        QueryParametersType PostgresUniverse inserting
+    makeQueryParameters proxy term = case term of
+        INSERT _ inserting -> makeQueryParameters proxy inserting
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (UPDATE (TABLE table) sub values)
+  where
+    type QueryParametersType PostgresUniverse (UPDATE (TABLE table) sub values) = values
+    makeQueryParameters _ term = case term of
+        UPDATE _  _ values -> values
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (DELETE (FROM (TABLE table)))
+  where
+    type QueryParametersType PostgresUniverse (DELETE (FROM (TABLE table))) = ()
+    makeQueryParameters _ _ = ()
+
+instance
+    ( MakeQueryParameters PostgresUniverse from
+    ) => MakeQueryParameters PostgresUniverse (SELECT project (FROM from))
+  where
+    type QueryParametersType PostgresUniverse (SELECT project (FROM from)) =
+        QueryParametersType PostgresUniverse from
+    makeQueryParameters proxy term = case term of
+        SELECT _ (FROM from) -> makeQueryParameters proxy from
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (INTERSECT left right)
+  where
+    type QueryParametersType PostgresUniverse (INTERSECT left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        INTERSECT left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (UNION left right)
+  where
+    type QueryParametersType PostgresUniverse (UNION left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        UNION left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (JOIN left right)
+  where
+    type QueryParametersType PostgresUniverse (JOIN left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        JOIN left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    ( MakeQueryParameters PostgresUniverse term
+    ) => MakeQueryParameters PostgresUniverse (AS term alias)
+  where
+    type QueryParametersType PostgresUniverse (AS term alias) =
+        QueryParametersType PostgresUniverse term
+    makeQueryParameters proxy term = case term of
+        AS subterm alias -> makeQueryParameters proxy subterm
+
+instance
+    ( MakeQueryParameters PostgresUniverse term
+    ) => MakeQueryParameters PostgresUniverse (LIMIT term nat)
+  where
+    type QueryParametersType PostgresUniverse (LIMIT term nat)
+        = QueryParametersType PostgresUniverse term
+    makeQueryParameters proxy term = case term of
+        LIMIT subterm _ -> makeQueryParameters proxy subterm
+
+instance
+    ( MakeQueryParameters PostgresUniverse term
+    ) => MakeQueryParameters PostgresUniverse (OFFSET term nat)
+  where
+    type QueryParametersType PostgresUniverse (OFFSET term nat)
+        = QueryParametersType PostgresUniverse term
+    makeQueryParameters proxy term = case term of
+        OFFSET subterm _ -> makeQueryParameters proxy subterm
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (ON left right)
+  where
+    type QueryParametersType PostgresUniverse (ON left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        ON left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    ( MakeQueryParameters PostgresUniverse term
+    , MakeQueryParameters PostgresUniverse restriction
+    ) => MakeQueryParameters PostgresUniverse (WHERE term restriction)
+  where
+    type QueryParametersType PostgresUniverse (WHERE term restriction) =
+        QueryParametersType PostgresUniverse term :. QueryParametersType PostgresUniverse restriction
+    makeQueryParameters proxy term = case term of
+        WHERE term restriction ->
+            makeQueryParameters proxy term :. makeQueryParameters proxy restriction
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (AND left right)
+  where
+    type QueryParametersType PostgresUniverse (AND left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        AND left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (OR left right)
+  where
+    type QueryParametersType PostgresUniverse (OR left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        OR left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    ( MakeQueryParameters PostgresUniverse term
+    ) => MakeQueryParameters PostgresUniverse (NOT term)
+  where
+    type QueryParametersType PostgresUniverse (NOT term) =
+        QueryParametersType PostgresUniverse term
+    makeQueryParameters proxy term = case term of
+        NOT term ->
+            makeQueryParameters proxy term
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (EQUAL left right)
+  where
+    type QueryParametersType PostgresUniverse (EQUAL left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        EQUAL left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (LESSTHAN left right)
+  where
+    type QueryParametersType PostgresUniverse (LESSTHAN left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        LESSTHAN left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    ( MakeQueryParameters PostgresUniverse left
+    , MakeQueryParameters PostgresUniverse right
+    ) => MakeQueryParameters PostgresUniverse (GREATERTHAN left right)
+  where
+    type QueryParametersType PostgresUniverse (GREATERTHAN left right) =
+        QueryParametersType PostgresUniverse left :. QueryParametersType PostgresUniverse right
+    makeQueryParameters proxy term = case term of
+        GREATERTHAN left right ->
+            makeQueryParameters proxy left :. makeQueryParameters proxy right
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (VALUE value)
+  where
+    type QueryParametersType PostgresUniverse (VALUE value) = value
+    makeQueryParameters _ term = case term of
+        VALUE x -> x
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (COLUMN column)
+  where
+    type QueryParametersType PostgresUniverse (COLUMN column) = ()
+    makeQueryParameters _ _ = ()
+
+-- |
+-- = Query output type definition
+
+class QueryOutput universe term where
+    type QueryOutputType universe term :: (WriteOrRead, *)
+
+instance
+    ( Selectable selectable
+    ) => QueryOutput PostgresUniverse (SELECT project (FROM selectable))
+  where
+    type QueryOutputType PostgresUniverse (SELECT project (FROM selectable)) =
+        '(READ, RowType (SelectableRowType project (SelectableForm selectable)))
+
+instance
+    (
+    ) => QueryOutput PostgresUniverse (INSERT left right)
+  where
+    type QueryOutputType PostgresUniverse (INSERT left right) = '(WRITE, Int64)
+
+instance
+    (
+    ) => QueryOutput PostgresUniverse (UPDATE a b c)
+  where
+    type QueryOutputType PostgresUniverse (UPDATE a b c) = '(WRITE, Int64)
+
+instance
+    (
+    ) => QueryOutput PostgresUniverse (DELETE term)
+  where
+    type QueryOutputType PostgresUniverse (DELETE term) = '(WRITE, Int64)
+
+instance
+    ( QueryOutput PostgresUniverse term
+    ) => QueryOutput PostgresUniverse (WHERE term restriction)
+  where
+    type QueryOutputType PostgresUniverse (WHERE term restriction) =
+        QueryOutputType PostgresUniverse term
+
+instance
+    ( QueryOutput PostgresUniverse term
+    ) => QueryOutput PostgresUniverse (LIMIT term nat)
+  where
+    type QueryOutputType PostgresUniverse (LIMIT term nat) =
+        QueryOutputType PostgresUniverse term
+
+instance
+    ( QueryOutput PostgresUniverse term
+    ) => QueryOutput PostgresUniverse (OFFSET term nat)
+  where
+    type QueryOutputType PostgresUniverse (OFFSET term nat) =
+        QueryOutputType PostgresUniverse term
+
+instance
+    ( QueryOutput PostgresUniverse term
+    ) => QueryOutput PostgresUniverse (GROUP_BY term columns)
+  where
+    type QueryOutputType PostgresUniverse (GROUP_BY term columns) =
+        QueryOutputType PostgresUniverse term
+
+
+-- |
+-- = Recognizing well-formed queries
 --
---
--- The new design: heavily typeclass based.
---
---
+-- These are (should be) those queries which are well-typed and will be
+-- successfully interpreted by the RDBMS represented by the @universe@ type
+-- containing the relations described by the @database@ type.
+
+class WellFormedQuery database universe term
+instance WellFormedQuery database universe term
+
 
 -- | Must pick up single-element inserts and updates and use Only, so as to obtain
 --   the ToRow and FromRow instances.
@@ -480,16 +1227,73 @@ instance
     pgRowIn (left :. right) = (pgRowIn left) :. (pgRowIn right)
     pgRowOut (left :. right) = (pgRowOut left) :. (pgRowOut right)
 
+
+-- | A class to choose either @execute@ or @query@ depending upon whether
+--   we're writing or reading. Second parameter is the query parameters type.
+class PGAction (x :: (WriteOrRead, *)) (p :: *) where
+    type PGActionConstraint x p :: Constraint
+    type PGActionOutput x p :: *
+    pgAction
+        :: ( PGActionConstraint x p
+           )
+        => Proxy x
+        -> Connection
+        -> Query
+        -> p
+        -> IO (PGActionOutput x p)
+
+instance PGAction '(WRITE, Int64) p where
+    type PGActionConstraint '(WRITE, Int64) p = (
+          PGRow p
+        , ToRow (PGRowType p)
+        )
+    type PGActionOutput '(WRITE, Int64) p = Int64
+    pgAction _ conn q params = execute conn q (pgRowIn params)
+
+instance PGAction '(READ, v) p where
+    type PGActionConstraint '(READ, v) p = (
+          PGRow p
+        , ToRow (PGRowType p)
+        , PGRow v
+        , FromRow (PGRowType v)
+        )
+    type PGActionOutput '(READ, v) p = [v]
+    pgAction _ conn q params = do
+        rows <- query conn q (pgRowIn params)
+        return (fmap pgRowOut rows)
+
+
 -- | A class indicating that some term can be interpreted inside
 --   PostgresUniverse.
 class
     ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    ) => RunPostgres database term
+    , SafeDatabase database universe
+    , WellFormedQuery database universe term
+    ) => RunRelational database universe term
   where
-    type PostgresCodomain database term :: *
-    runPostgres :: Proxy database -> term -> PostgresCodomain database term
+    type RunRelationalCodomain database universe term :: *
+    runRelational
+        :: Proxy database
+        -> Proxy universe
+        -> term
+        -> RunRelationalCodomain database universe term
 
+instance
+   ( WellFormedDatabase database
+   , SafeDatabase database PostgresUniverse
+   , WellFormedQuery database PostgresUniverse term
+   , MakeQuery term Query
+   , MakeQueryParameters PostgresUniverse term
+   , QueryOutput PostgresUniverse term
+   , PGAction (QueryOutputType PostgresUniverse term) (QueryParametersType PostgresUniverse term)
+   , PGActionConstraint (QueryOutputType PostgresUniverse term) (QueryParametersType PostgresUniverse term)
+   ) => RunRelational database PostgresUniverse term
+ where
+   type RunRelationalCodomain database PostgresUniverse term =
+       ReaderT Connection IO (PGActionOutput (QueryOutputType PostgresUniverse term) (QueryParametersType PostgresUniverse term))
+   runRelational _ proxyU term = do
+       connection <- ask
+       lift $ pgAction (Proxy :: Proxy (QueryOutputType PostgresUniverse term)) connection (makeQuery term) (makeQueryParameters proxyU term)
 
 -- Plan for selection in the presence of joins, unions, intersections:
 -- we need some way to get the "schema" of a relation, i.e. the columns (their
@@ -515,8 +1319,8 @@ class
 --    SELECT projection (FROM x `AS` aliasWithColumnNames)
 -- where x has a type giving its schema.
 --
--- So I think what we want is a PGSelectable class, for the things which can
--- go inside the FROM. It has an associated type PGSelectableForm, as
+-- So I think what we want is a Selectable class, for the things which can
+-- go inside the FROM. It has an associated type SelectableForm, as
 -- determined by the aliases, and instances have constraints which ensure that
 -- the aliases are sane.
 --
@@ -531,6 +1335,11 @@ class
 -- offsets can go after a select, and be nested in another select, but we
 -- simply must ensure that there's AT MOST one limit and one offset per
 -- selecti. How? A type function indicator which reveals limited clauses?
+
+type family ProjectTypes project :: [*] where
+    ProjectTypes P = '[]
+    ProjectTypes (PROJECT (AS (COLUMN '(tableName, col)) alias) rest) = ColumnType col ': ProjectTypes rest
+    ProjectTypes (PROJECT (COUNT (COLUMNS columns)) rest) = PGInteger ': ProjectTypes rest
 
 -- | The prefix alias from an alias.
 type family AliasAlias (alias :: (Symbol, [Symbol])) :: Symbol where
@@ -549,25 +1358,30 @@ type family TagFieldsUsingAlias (alias :: Symbol) (columnAliases :: [Symbol]) (f
     TagFieldsUsingAlias alias '[] '[] = '[]
     TagFieldsUsingAlias alias (a ': as) (f ': fs) = '(alias, '(a, f)) ': TagFieldsUsingAlias alias as fs
 
--- | Given a PGSelectableForm and a projection from it, compute the row type,
+-- | True if and only if there are no duplicate column aliases.
+type family AliasDistinctNames (alias :: (Symbol, [Symbol])) :: Bool where
+    AliasDistinctNames '(alias, aliases) = Unique aliases
+
+-- | Given a SelectableForm and a projection from it, compute the row type,
 --   i.e. the thing you will actually get back if you run a select with this
 --   projection on this selectable.
-type family PGSelectableRowType project (selectableForm :: [(Symbol, (Symbol, *))]) :: [*] where
-    PGSelectableRowType P form = '[]
-    PGSelectableRowType (PROJECT left right) form = PGSelectableLookup left form ': PGSelectableRowType right form
+type family SelectableRowType project (selectableForm :: [(Symbol, (Symbol, *))]) :: [*] where
+    SelectableRowType P form = '[]
+    SelectableRowType (PROJECT (AS (COLUMN '(tableName, col)) alias) right) form = SelectableLookup '(tableName, col, alias) form ': SelectableRowType right form
+    SelectableRowType (PROJECT (COUNT (COLUMNS cols)) right) form = PGInteger ': SelectableRowType right form
 
--- | Helper for PGSelectableRowType. Looks up the matching part of the
+-- | Helper for SelectableRowType. Looks up the matching part of the
 --   selectable form, according to alias prefix and column alias.
-type family PGSelectableLookup (p :: (Symbol, (Symbol, *), Symbol)) (selectableForm :: [(Symbol, (Symbol, *))]) :: * where
-    PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, ty)) ': rest ) = ty
-    PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, ty)) ': rest ) = PGSelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
+type family SelectableLookup (p :: (Symbol, (Symbol, *), Symbol)) (selectableForm :: [(Symbol, (Symbol, *))]) :: * where
+    SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, ty)) ': rest ) = ty
+    SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, ty)) ': rest ) = SelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
 
-type family PGSelectableTypes (p :: [(Symbol, (Symbol, *))]) :: [*] where
-    PGSelectableTypes '[] = '[]
-    PGSelectableTypes ( '(alias, '(columnAlias, ty)) ': rest ) = ty ': PGSelectableTypes rest
+type family SelectableTypes (p :: [(Symbol, (Symbol, *))]) :: [*] where
+    SelectableTypes '[] = '[]
+    SelectableTypes ( '(alias, '(columnAlias, ty)) ': rest ) = ty ': SelectableTypes rest
 
 -- | Something FROM which we can select.
---   It indicates the schema that will come out: a list of columns (names and
+--   It indicates the schema that will come out: a list of fields (names and
 --   types) with their aliases (prefix before a dot).
 --
 --   Base cases:
@@ -575,50 +1389,47 @@ type family PGSelectableTypes (p :: [(Symbol, (Symbol, *))]) :: [*] where
 --     - selecting from a literal values (VALUES).
 --
 --   Recursive cases:
---     - selecting from any PGSelectable
---     - selecting form any intersection of PGSelectables
---     - selecting from any union of PGSelectables
---     - selecting from any join of PGSelectables
-class PGSelectable database term where
-    -- PGSelectableForm gives the prefix alias, column alias, and read field
+--     - selecting from any Selectable
+--     - selecting form any intersection of Selectables
+--     - selecting from any union of Selectables
+--     - selecting from any join of Selectables
+class Selectable term where
+    -- SelectableForm gives the prefix alias, column alias, and read field
     -- type. Do not confuse it with the column type! The read field type is
     -- what you'll actually get out, not necessarily what is listed in some
     -- schema.
-    type PGSelectableForm database term :: [(Symbol, (Symbol, *))]
+    type SelectableForm term :: [(Symbol, (Symbol, *))]
 
 -- | The alias includes a table alias and aliases for every column, so we
---   can just use that as the PGSelectableForm, after computing the read
+--   can just use that as the SelectableForm, after computing the read
 --   field type from the table's schema.
 instance
-    ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    , DatabaseHasTable database table
-    ) => PGSelectable database (AS (TABLE table) (alias :: (Symbol, [Symbol])))
+    (
+    ) => Selectable (AS (TABLE table) (alias :: (Symbol, [Symbol])))
   where
-    type PGSelectableForm database (AS (TABLE table) alias) =
+    type SelectableForm (AS (TABLE table) alias) =
         TagFieldsUsingAlias
             (AliasAlias alias)
             (AliasColumnAliases alias)
             (FieldTypes READ (TableSchema table) (SchemaColumns (TableSchema table)))
 
 -- | Here, the type of @values@ is determined by the alias columns, and the
---   @PGSelectableForm@ are determined by both of them.
+--   @SelectableForm@ are determined by both of them.
 --   In order for this to make sense, the @values@ must be a tuple (or Identity)
---   of appropriate length, at which points its components will be used to
---   determine the column types.
+--   of appropriate length, then its components will be used to determine the
+--   column types.
 instance
-    ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    ) => PGSelectable database (AS (VALUES values) (alias :: (Symbol, [Symbol])))
+    (
+    ) => Selectable (AS (VALUES values) (alias :: (Symbol, [Symbol])))
   where
-    type PGSelectableForm database (AS (VALUES values) alias) =
+    type SelectableForm (AS (VALUES values) alias) =
         TagFieldsUsingAlias
             (AliasAlias alias)
             (AliasColumnAliases alias)
             (InverseRowType values)
 
 -- | For intersections, we demand that left and right are PGSelections (not
---   PGSelectable) and with compatible forms (types coincide, but aliases may
+--   Selectable) and with compatible forms (types coincide, but aliases may
 --   differ).
 --
 --   This will allows us to interpret
@@ -640,16 +1451,13 @@ instance
 --
 --   This obviates the need for PGSelection class.
 instance
-    ( PGSelectable database selectableLeft
-    , PGSelectable database selectableRight
-    -- We can only intersect relations of the same form (types; aliases
-    -- are irrelevant).
-    , ProjectTypes projectLeft ~ ProjectTypes projectRight
-    ) => PGSelectable database (AS (INTERSECT (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) (alias :: (Symbol, [Symbol])))
+    ( Selectable selectableLeft
+    , Selectable selectableRight
+    ) => Selectable (AS (INTERSECT (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) (alias :: (Symbol, [Symbol])))
   where
     -- This should be the types determined by left and right projections,
     -- aliased by the AS alias here.
-    type PGSelectableForm database (AS (INTERSECT (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) alias) =
+    type SelectableForm (AS (INTERSECT (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) alias) =
         TagFieldsUsingAlias
             (AliasAlias alias)
             (AliasColumnAliases alias)
@@ -658,16 +1466,13 @@ instance
             (ProjectTypes projectLeft)
 
 instance
-    ( PGSelectable database selectableLeft
-    , PGSelectable database selectableRight
-    -- We can only intersect relations of the same form (types; aliases
-    -- are irrelevant).
-    , ProjectTypes projectLeft ~ ProjectTypes projectRight
-    ) => PGSelectable database (AS (UNION (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) (alias :: (Symbol, [Symbol])))
+    ( Selectable selectableLeft
+    , Selectable selectableRight
+    ) => Selectable (AS (UNION (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) (alias :: (Symbol, [Symbol])))
   where
     -- This should be the types determined by left and right projections,
     -- aliased by the AS alias here.
-    type PGSelectableForm database (AS (UNION (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) alias) =
+    type SelectableForm (AS (UNION (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) alias) =
         TagFieldsUsingAlias
             (AliasAlias alias)
             (AliasColumnAliases alias)
@@ -675,12 +1480,35 @@ instance
             -- ProjectTypes projectLeft ~ ProjectTypes projectRight
             (ProjectTypes projectLeft)
 
+instance
+    ( Selectable selectableLeft
+    , Selectable selectableRight
+    ) => Selectable (ON (JOIN (AS (SELECT projectLeft (FROM selectableLeft)) (aliasLeft :: (Symbol, [Symbol]))) (AS (SELECT projectRight (FROM selectableRight)) (aliasRight :: (Symbol, [Symbol])))) joinCondition)
+  where
+    -- The instance constraints guarantee that left and right aliases are
+    -- distinct. With this assumption, we can simply alias each project
+    -- with its alias, and concatenate them, making every member of each
+    -- table available in the form of the join.
+    type SelectableForm (ON (JOIN (AS (SELECT projectLeft (FROM selectableLeft)) aliasLeft) (AS (SELECT projectRight (FROM selectableRight)) aliasRight)) joinCondition) =
+        Append
+            (TagFieldsUsingAlias
+                (AliasAlias aliasLeft)
+                (AliasColumnAliases aliasLeft)
+                (ProjectTypes projectLeft)
+            )
+            (TagFieldsUsingAlias
+                (AliasAlias aliasRight)
+                (AliasColumnAliases aliasRight)
+                (ProjectTypes projectRight)
+            )
+
+{-
 instance
     ( WellFormedDatabase database
     , SafeDatabase database PostgresUniverse
     , PGQuery (SELECT project (FROM selectable))
-    , PGSelectable database selectable
-    , rowType ~ RowType (PGSelectableRowType project (PGSelectableForm database selectable))
+    , Selectable database selectable
+    , rowType ~ RowType (SelectableRowType project (SelectableForm database selectable))
     , PGRow rowType
     , FromRow (PGRowType rowType)
 
@@ -690,7 +1518,7 @@ instance
     ) => RunPostgres database (SELECT project (FROM selectable))
   where
     type PostgresCodomain database (SELECT project (FROM selectable)) =
-        ReaderT Connection IO [RowType (PGSelectableRowType project (PGSelectableForm database selectable))]
+        ReaderT Connection IO [RowType (SelectableRowType project (SelectableForm database selectable))]
     runPostgres proxyDB term = do
         let (queryString, parameters) = pgQuery term
         connection <- ask
@@ -797,40 +1625,13 @@ instance
             connection <- ask
             lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) ((pgRowIn queryParameters) :. restrictParameters)
             return ()
+-}
 
-class PGMakeUpdateString sub where
-    pgMakeUpdateString :: sub -> String
-
-instance PGMakeUpdateStrings sub => PGMakeUpdateString sub where
-    pgMakeUpdateString = concat . intersperse ", " . pgMakeUpdateStrings
-
--- Given a suitable thing (a PROJECT, as the instances show), make a list of
--- strings where each string gives an assignment of some column name to a
--- question mark.
-class
-    (
-    ) => PGMakeUpdateStrings sub 
-  where
-    pgMakeUpdateStrings :: sub -> [String]
-
-instance {-# OVERLAPS #-}
-    ( KnownSymbol (ColumnName column)
-    ) => PGMakeUpdateStrings (SUB column S)
-  where
-    pgMakeUpdateStrings _ = [symbolVal (Proxy :: Proxy (ColumnName column)) ++ " = ?"]
-
-instance {-# OVERLAPS #-}
-    ( KnownSymbol (ColumnName column)
-    , PGMakeUpdateStrings rest
-    ) => PGMakeUpdateStrings (SUB column rest)
-  where
-    pgMakeUpdateStrings (SUB _ rest) =
-          (symbolVal (Proxy :: Proxy (ColumnName column)) ++ " = ?")
-        : pgMakeUpdateStrings rest
 
 -- This class is useful for composing queries, for instance when we encounter
 -- a WHERE clause and we just want to get the query string of the thing to
 -- be restricted.
+{-
 class
     (
     ) => PGQuery term
@@ -840,7 +1641,7 @@ class
 
 instance
     ( KnownSymbol (TableName table)
-    , PGMakeValuesString (SchemaColumns (TableSchema table))
+    , MakeValuesClause (SchemaColumns (TableSchema table))
     , values ~ RowTypeColumns WRITE (TableSchema table) (SchemaColumns (TableSchema table))
     ) => PGQuery (INSERT (INTO (TABLE table)) (VALUES values))
   where
@@ -851,7 +1652,7 @@ instance
                       "INSERT INTO "
                     , symbolVal (Proxy :: Proxy (TableName table))
                     , " VALUES "
-                    , pgMakeValuesString (Proxy :: Proxy (SchemaColumns (TableSchema table)))
+                    , makeValuesClause (Proxy :: Proxy (SchemaColumns (TableSchema table)))
                     ]
                 parameters = values
             in  (queryString, parameters)
@@ -910,7 +1711,7 @@ instance
             in  (queryString, parameters)
 
 instance
-    ( PGMakeValuesString (InverseRowType values)
+    ( MakeValuesClause (InverseRowType values)
     , PGMakeProjectString project
     , PGMakeAliasString alias
     ) => PGQuery (SELECT project (FROM (AS (VALUES values) alias)))
@@ -922,7 +1723,7 @@ instance
                       "SELECT "
                     , pgMakeProjectString (Proxy :: Proxy project)
                     , " FROM "
-                    , pgMakeValuesString (Proxy :: Proxy (InverseRowType values))
+                    , makeValuesClause (Proxy :: Proxy (InverseRowType values))
                     , " AS "
                     , pgMakeAliasString (Proxy :: Proxy alias)
                     ]
@@ -981,6 +1782,41 @@ instance
                 parameters = leftParameters :. rightParameters
             in  (queryString, parameters)
 
+instance
+    ( PGQuery left
+    , PGQuery right
+    , PGMakeProjectString project
+    , PGMakeRestriction condition
+    , PGMakeAliasString alias
+    ) => PGQuery (SELECT project (FROM (AS (ON (JOIN left right) condition) alias)))
+  where
+    type PGQueryParameterType (SELECT project (FROM (AS (ON (JOIN left right) condition) alias))) =
+        (PGQueryParameterType left) :. (PGQueryParameterType right) :. (PGMakeRestrictionValues condition)
+    pgQuery term = case term of
+        SELECT project (FROM (AS (UNION left right) alias)) ->
+            let (leftQueryString, leftParameters) = pgQuery left
+                (rightQueryString, rightParameters) = pgQuery right
+                queryString = concat [
+                      "SELECT "
+                    , pgMakeProjectString (Proxy :: Proxy project)
+                    -- Here's trouble. We need to have the left query string
+                    -- parenthesized except for its AS part.
+                    --
+                    -- AH even more trouble! You don't AS a join clause!
+                    -- Must remove that. OK, so we must factor the query
+                    -- string into parts: the principal part and then the
+                    -- alias.
+                    , " FROM ("
+                    , leftQueryString
+                    , " JOIN "
+                    , rightQueryString
+                    , ") AS "
+                    , pgMakeAliasString (Proxy :: Proxy alias)
+                    ]
+                parameters = leftParameters :. rightParameters
+            in  (queryString, parameters)
+-}
+{-
 class
     (
     ) => PGMakeRestriction term
@@ -1143,104 +1979,65 @@ instance PGTerminalRestriction (VALUE ty) where
 
 instance PGTerminalRestriction (COLUMN tableName column) where
     type PGTerminalRestrictionType (COLUMN tableName column) = ColumnType column
-
--- To make a string of 0 or more ?, separated by columns and enclosed by
--- parens, as we would use when doing an insertion.
-class PGMakeValuesString columns where
-    pgMakeValuesString :: Proxy columns -> String
-
-instance PGMakeValuesStrings columns => PGMakeValuesString columns where
-    pgMakeValuesString proxy = concat [
-          "("
-        , concat (intersperse "," (pgMakeValuesStrings proxy))
-        , ")"
-        ]
-
-class PGMakeValuesStrings columns where
-    pgMakeValuesStrings :: Proxy columns -> [String]
-
-instance PGMakeValuesStrings '[] where
-    pgMakeValuesStrings _ = []
-
-instance PGMakeValuesStrings cs => PGMakeValuesStrings (c ': cs) where
-    pgMakeValuesStrings _ = "?" : pgMakeValuesStrings (Proxy :: Proxy cs)
+-}
 
 
-class PGMakeProjectString project where
-    pgMakeProjectString :: Proxy project -> String
 
-instance PGMakeProjectStrings project => PGMakeProjectString project where
-    pgMakeProjectString proxy = concat (intersperse "," (pgMakeProjectStrings proxy))
-
-class PGMakeProjectStrings project where
-    pgMakeProjectStrings :: Proxy project -> [String]
-
-instance {-# OVERLAPS #-}
-    ( KnownSymbol name
-    , KnownSymbol (ColumnName column)
-    , KnownSymbol alias
-    ) => PGMakeProjectStrings (PROJECT '(name, column, alias) P) where
-    pgMakeProjectStrings _ = [concat [
-          concat ["\"", symbolVal (Proxy :: Proxy name), "\""]
-        , "."
-        , concat ["\"", symbolVal (Proxy :: Proxy (ColumnName column)), "\""]
-        , " AS "
-        , concat ["\"", symbolVal (Proxy :: Proxy alias), "\""]
-        ]]
-
-instance {-# OVERLAPS #-}
-    ( KnownSymbol name
-    , KnownSymbol (ColumnName column)
-    , KnownSymbol alias
-    , PGMakeProjectStrings rest
-    ) => PGMakeProjectStrings (PROJECT '(name, column, alias) rest)
-  where
-    pgMakeProjectStrings _ = concat [
-          concat ["\"", symbolVal (Proxy :: Proxy name), "\""]
-        , "."
-        , concat ["\"", symbolVal (Proxy :: Proxy (ColumnName column)), "\""]
-        , " AS "
-        , concat ["\"", symbolVal (Proxy :: Proxy alias), "\""]
-        ] : pgMakeProjectStrings (Proxy :: Proxy rest)
+-- Must be able to constrain a condition to make sense given the columns
+-- available. This seems like it'll be general enough to reuse in, say, an
+-- sqlite driver.
+-- Must also be able to constrain certain conditions by type, like > to work
+-- only with the ordered types... well, no, I think every PostgreSQL type
+-- is ordered.
 
 class
     (
-    ) => PGMakeAliasString alias
-  where
-    pgMakeAliasString :: Proxy alias -> String
+    ) => PGCompatibleRestriction database (form :: [(Symbol, (Symbol, *))]) restriction
 
 instance
-    ( KnownSymbol alias
-    , PGMakeAliasStrings aliases
-    ) => PGMakeAliasString '(alias, aliases)
-  where
-    pgMakeAliasString _ = concat [
-           concat ["\"", symbolVal (Proxy :: Proxy alias), "\""]
-         , " ("
-         , concat (intersperse "," (pgMakeAliasStrings (Proxy :: Proxy aliases)))
-         , ")"
-         ]
-
-class
-    (
-    ) => PGMakeAliasStrings aliases
-  where
-    pgMakeAliasStrings :: Proxy aliases -> [String]
+    ( PGCompatibleRestriction database form left
+    , PGCompatibleRestriction database form right
+    ) => PGCompatibleRestriction database form (AND left right)
 
 instance
-    (
-    ) => PGMakeAliasStrings '[]
-  where
-    pgMakeAliasStrings _ = []
+    ( PGCompatibleRestriction database form left
+    , PGCompatibleRestriction database form right
+    ) => PGCompatibleRestriction database form (OR left right)
 
 instance
-    ( KnownSymbol alias
-    , PGMakeAliasStrings rest
-    ) => PGMakeAliasStrings (alias ': rest)
-  where
-    pgMakeAliasStrings _ =
-          (concat ["\"", symbolVal (Proxy :: Proxy alias), "\""])
-        : pgMakeAliasStrings (Proxy :: Proxy rest)
+    ( PGCompatibleRestriction database form term
+    ) => PGCompatibleRestriction database form (NOT term)
+
+instance
+    ( PGCompatibleRestriction database form left
+    , PGCompatibleRestriction database form right
+    ) => PGCompatibleRestriction database form (EQUAL left right)
+
+instance
+    ( PGCompatibleRestriction database form left
+    , PGCompatibleRestriction database form right
+    ) => PGCompatibleRestriction database form (LESSTHAN left right)
+
+instance
+    ( PGCompatibleRestriction database form left
+    , PGCompatibleRestriction database form right
+    ) => PGCompatibleRestriction database form (GREATERTHAN left right)
+
+instance
+    ( Member '(tableName, column) form ~ True
+    ) => PGCompatibleRestriction database form (COLUMN '(tableName, column))
+
+
+
+type Table1 = Table "table1" (Schema '[] '[] '[] '[] '[] '[] '[])
+table1 :: Proxy Table1
+table1 = Proxy
+restriction1 = EQUAL (VALUE 1) (VALUE 2)
+restriction2 = NOT (AND (restriction1) (restriction1))
+delete1 = DELETE (FROM (TABLE table1)) `WHERE` restriction2
+project1 = (Proxy :: Proxy '("foo", '("a", Integer), "bar")) |: P
+select1 = SELECT project1 (FROM (TABLE table1))
+intersect1 = select1 `INTERSECT` select1
 
 {-
 class

@@ -23,6 +23,9 @@ import Data.Proxy
 
 -- | In practice, alias should have kind
 --      (Symbol, [Symbol])
---   indicating a table alias as well as column names.
+--   indicating a table alias as well as column names
+--   OR just
+--      Symbol
+--   indicating simply an alias for a column.
 data AS term alias where
     AS :: term -> Proxy alias -> AS term alias

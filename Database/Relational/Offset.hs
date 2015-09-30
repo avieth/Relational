@@ -1,0 +1,26 @@
+{-|
+Module      : Database.Relational.Offset
+Description : Definition of OFFSET.
+Copyright   : (c) Alexander Vieth, 2015
+Licence     : BSD3
+Maintainer  : aovieth@gmail.com
+Stability   : experimental
+Portability : non-portable (GHC only)
+-}
+
+{-# LANGUAGE AutoDeriveTypeable #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE GADTs #-}
+
+module Database.Relational.Offset (
+
+      OFFSET(..)
+
+    ) where
+
+import GHC.TypeLits (Nat)
+import Data.Proxy
+
+data OFFSET relation (nat :: Nat) where
+    OFFSET :: relation -> Proxy nat -> OFFSET relation nat

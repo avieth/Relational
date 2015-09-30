@@ -40,6 +40,8 @@ import Database.Relational.Project
 import Database.Relational.As
 import Database.Relational.Intersect
 import Database.Relational.Union
+import Database.Relational.Join
+import Database.Relational.Count
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
 import Data.Functor.Identity
@@ -101,98 +103,93 @@ dbvalue = databaseD Proxy Proxy Proxy
 userTable :: Proxy UserTable
 userTable = Proxy
 
+usernamesTable :: Proxy UsernameTable
+usernamesTable = Proxy
+
 uuidColumn :: Proxy '("uuid", PGUUID)
 uuidColumn = Proxy
+
+usernameColumn :: Proxy '("username", PGText)
+usernameColumn = Proxy
 
 userDatabase :: Proxy UserDatabase
 userDatabase = Proxy
 
-insertNew :: ReaderT Connection IO ()
-insertNew = do
-    u1 <- lift nextRandom
-    let insertion = INSERT
-                    (INTO (TABLE userTable))
-                    (VALUES (Identity (PGUUID u1)))
-    runPostgres userDatabase insertion
+insertNew uuid = INSERT
+                 (INTO (TABLE userTable))
+                 (VALUES (Identity (PGUUID uuid)))
 
-deleteAll :: ReaderT Connection IO ()
-deleteAll = do
-    let deletion = DELETE (FROM (TABLE userTable))
-    runPostgres userDatabase deletion
+deleteAll = DELETE (FROM (TABLE userTable))
 
-deleteUuid :: UUID -> ReaderT Connection IO ()
-deleteUuid uuid = do
-    let deletion = DELETE
-                   (FROM (TABLE userTable))
-                   `WHERE`
-                   ((COLUMN (Proxy :: Proxy (TableName UserTable)) uuidColumn) .==. (VALUE (PGUUID uuid)))
-    runPostgres userDatabase deletion
+deleteUuid uuid = DELETE
+                  (FROM (TABLE userTable))
+                  `WHERE`
+                  (   (COLUMN :: COLUMN '(TableName UserTable, UUIDColumn))
+                      .==.
+                      (VALUE (PGUUID uuid))
+                  )
 
-selectAll :: ReaderT Connection IO [Identity PGUUID]
-selectAll = do
-    let uuid :: Proxy '("users", UUIDColumn, "uuid")
-        uuid = Proxy
-    let alias :: Proxy '("users", '["uuid"])
-        alias = Proxy
-    let selection = SELECT
-                    (uuid |: P)
-                    (FROM ((TABLE userTable)
-                          `AS` 
-                          (alias)
-                          )
+selectAllUsers = SELECT
+                 (      ((COLUMN :: COLUMN '("users", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
+                     |: P
+                 )
+                 (FROM ((TABLE userTable)
+                        `AS`
+                        alias
+                       )
+                 )
+  where
+    uuid :: Proxy '("users", UUIDColumn, "uuid")
+    uuid = Proxy
+    alias :: Proxy '("users", '["uuid"])
+    alias = Proxy
+
+selectAllUsernames = SELECT
+                     (      ((COLUMN :: COLUMN '("usernames", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
+                         |: ((COLUMN :: COLUMN '("usernames", UsernameColumn)) `AS` (Proxy :: Proxy "username"))
+                         |: P
+                     )
+                     (FROM ((TABLE usernamesTable)
+                            `AS`
+                            alias
+                           )
+                     )
+  where
+    uuid :: Proxy '("usernames", UUIDColumn, "uuid")
+    uuid = Proxy
+    username :: Proxy '("usernames", UsernameColumn, "username")
+    username = Proxy
+    alias :: Proxy '("usernames", '["uuid", "username"])
+    alias = Proxy
+
+selectJoin = SELECT
+             (      ((COLUMN :: COLUMN '("users", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
+                 |: ((COLUMN :: COLUMN '("usernames", UsernameColumn)) `AS` (Proxy :: Proxy "username"))
+                 |: P
+             )
+             (FROM (((selectAllUsers `AS` aliasLeft)
+                    `JOIN`
+                    (selectAllUsernames `AS` aliasRight))
+                    `ON`
+                    ((COLUMN :: COLUMN '("users", UUIDColumn))
+                     .==.
+                     (COLUMN :: COLUMN '("usernames", UUIDColumn))
                     )
-    runPostgres userDatabase selection
+                   )
+             )
+  where
+    uuid :: Proxy '("users", UUIDColumn, "uuid")
+    uuid = Proxy
+    username :: Proxy '("usernames", UsernameColumn, "username")
+    username = Proxy
+    aliasLeft :: Proxy '("users", '["uuid"])
+    aliasLeft = Proxy
+    aliasRight :: Proxy '("usernames", '["uuid", "username"])
+    aliasRight = Proxy
 
--- Silly query just to demonstrate intersection
-selectIntersect :: ReaderT Connection IO [Identity PGUUID]
-selectIntersect = do
-    let leftAlias :: Proxy '("left", '["uuid"])
-        leftAlias = Proxy
-    let rightAlias :: Proxy '("right", '["uuid"])
-        rightAlias = Proxy
-    let leftUuid :: Proxy '("left", UUIDColumn, "uuid")
-        leftUuid = Proxy
-    let rightUuid :: Proxy '("right", UUIDColumn, "uuid")
-        rightUuid = Proxy
-    let intersectAlias :: Proxy '("intersect", '["uuid"])
-        intersectAlias = Proxy
-    let intersectUuid :: Proxy '("intersect", UUIDColumn, "uuid")
-        intersectUuid = Proxy
-    let selection = SELECT
-                    (intersectUuid |: P)
-                    (FROM (((SELECT (leftUuid  |: P) (FROM ((TABLE userTable) `AS` leftAlias)))
-                           `INTERSECT`
-                           (SELECT (rightUuid |: P) (FROM ((TABLE userTable) `AS` rightAlias)))
-                          )
-                          `AS`
-                          (intersectAlias)
-                          )
-                    )
-    runPostgres userDatabase selection
-
--- Silly query just to demonstrate union
-selectUnion :: ReaderT Connection IO [Identity PGUUID]
-selectUnion = do
-    let leftAlias :: Proxy '("left", '["uuid"])
-        leftAlias = Proxy
-    let rightAlias :: Proxy '("right", '["uuid"])
-        rightAlias = Proxy
-    let leftUuid :: Proxy '("left", UUIDColumn, "uuid")
-        leftUuid = Proxy
-    let rightUuid :: Proxy '("right", UUIDColumn, "uuid")
-        rightUuid = Proxy
-    let unionAlias :: Proxy '("union", '["uuid"])
-        unionAlias = Proxy
-    let unionUuid :: Proxy '("union", UUIDColumn, "uuid")
-        unionUuid = Proxy
-    let selection = SELECT
-                    (unionUuid |: P)
-                    (FROM (((SELECT (leftUuid  |: P) (FROM ((TABLE userTable) `AS` leftAlias)))
-                           `UNION`
-                           (SELECT (rightUuid |: P) (FROM ((TABLE userTable) `AS` rightAlias)))
-                          )
-                          `AS`
-                          (unionAlias)
-                          )
-                    )
-    runPostgres userDatabase selection
+selectCount = SELECT
+              (      (COUNT (COLUMNS :: COLUMNS '[ '("users", UUIDColumn) ]) `AS` (Proxy :: Proxy "count"))
+                  |: P
+              )
+              (FROM (TABLE userTable `AS` (Proxy :: Proxy '("users", '["uuid"])))
+              )

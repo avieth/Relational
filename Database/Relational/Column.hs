@@ -19,6 +19,7 @@ module Database.Relational.Column (
 
       Column
     , COLUMN(..)
+    , COLUMNS(..)
     , ColumnName
     , ColumnType
 
@@ -32,8 +33,12 @@ import Data.Proxy
 type Column (name :: Symbol) (t :: *) = '(name, t)
 
 -- A column qualified by a table name.
-data COLUMN (tableName :: Symbol) (column :: (Symbol, *)) where
-    COLUMN :: Proxy tableName -> Proxy column -> COLUMN tableName column
+data COLUMN (column :: (Symbol, (Symbol, *))) where
+    COLUMN :: COLUMN '(tableName, column)
+
+-- Columns, each qualified by a table name.
+data COLUMNS (columns :: [(Symbol, (Symbol, *))]) where
+    COLUMNS :: COLUMNS columns
 
 type family ColumnName (column :: (Symbol, *)) :: Symbol where
     ColumnName '(name, t) = name

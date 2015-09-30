@@ -21,10 +21,12 @@ module Database.Relational.Project (
     , P(..)
     , (|:)
 
+    {-
     , ProjectColumns
     , ProjectTableNames
     , ProjectAliases
     , ProjectTypes
+    -}
 
     ) where
 
@@ -37,13 +39,14 @@ import Database.Relational.Column
 --   The right parameter is either another PROJECT with the same contract, or
 --   P.
 data PROJECT left right where
-    PROJECT :: Proxy left -> right -> PROJECT left right
+    PROJECT :: left -> right -> PROJECT left right
 
 data P = P
 
 infixr 8 |:
 (|:) = PROJECT
 
+{-
 type family ProjectColumns project where
     ProjectColumns P = '[]
     ProjectColumns (PROJECT '(tableName, column, alias) rest) = column ': (ProjectColumns rest)
@@ -59,3 +62,4 @@ type family ProjectAliases project where
 type family ProjectTypes project where
     ProjectTypes P = '[]
     ProjectTypes (PROJECT '(tableName, column, alias) rest) = ColumnType column ': ProjectTypes rest
+-}
