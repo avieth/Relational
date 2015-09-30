@@ -11,6 +11,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE AutoDeriveTypeable #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ConstraintKinds #-}
@@ -29,6 +30,8 @@ module Database.Relational.Database (
     , DatabaseHasTable
     , LookupTable
     , LookupSchema
+
+    , DATABASE(..)
 
     ) where
 
@@ -71,3 +74,6 @@ type family LookupTable name tables where
 
 type family LookupSchema name tables where
     LookupSchema name tables = TableSchema (LookupTable name tables)
+
+data DATABASE db where
+    DATABASE :: DATABASE db

@@ -73,9 +73,11 @@ import Database.Relational.Limit
 import Database.Relational.Offset
 import Database.Relational.Count
 import Database.Relational.Group
+import Database.Relational.Default
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
+import qualified Database.PostgreSQL.Simple.Types as PT (Default(..))
 import Data.UUID (UUID)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy.Builder as BT
@@ -86,6 +88,15 @@ import Data.Time.LocalTime
 -- = Types
 
 data PostgresUniverse = PostgresUniverse
+
+-- Orphan instance :( How to better handle this? We need to take the
+-- Relational, driver-agnostic notion of Default and marshall it to something
+-- which postgresql-simple understands. This is similar to what we do
+-- with Identity <-> Only, which is a To/FromRow notion.
+-- 
+instance ToField t => ToField (Default t) where
+    toField (DEFAULT) = toField PT.Default
+    toField (NOT_DEFAULT t) = toField t
 
 class
     ( ToField t
@@ -144,6 +155,11 @@ instance RelationalUniverse PostgresUniverse where
 --
 -- TODO slight refactor, in which we factor out query generation into some
 -- monoid m. This is to be consistent with query generation.
+-- TODO BIGGGG refactor. This should be done just like other SQL: write it
+-- out for yourself using Haskell datatypes. We'll give a Postgres
+-- interpreter for things like CREATE and ADD (CONSTRAINT ... )
+-- and then we'll also give automatic generation of these terms from
+-- database types.
 
 createDatabase
     :: forall database tables .
@@ -152,7 +168,7 @@ createDatabase
     -> ReaderT Connection IO ()
 createDatabase databased = do createTables databased
                               createConstraints databased
-                              
+
 createTables
     :: forall database tables .
        ( )
@@ -329,6 +345,108 @@ foreignKeyReferenceColumnsStrings foreignKeyReferenced = case foreignKeyReferenc
           (symbolVal (Proxy :: Proxy (ColumnName (ForeignKeyReferenceLocal ref))), symbolVal (Proxy :: Proxy (ColumnName (ForeignKeyReferenceForeign ref))))
         : (foreignKeyReferenceColumnsStrings rest)
 
+createTableQuery
+    :: ( IsString m
+       , Monoid m
+       , KnownSymbol tableName
+       )
+    => Proxy tableName
+    -> m
+createTableQuery proxyTableName = mconcat [
+      fromString "CREATE TABLE "
+    , fromString (symbolVal proxyTableName)
+    , " ()"
+    ]
+
+addColumnQuery
+    :: forall m table column .
+       ( IsString m
+       , Monoid m
+       , KnownSymbol (ColumnName column)
+       , KnownSymbol (TableName table)
+       , PostgresUniverseConstraint (ColumnType column)
+       )
+    => Proxy table
+    -> Proxy column
+    -> m
+addColumnQuery _ _ = mconcat [
+      fromString "ALTER TABLE "
+    , fromString (symbolVal (Proxy :: Proxy (TableName table)))
+    , fromString " ADD COLUMN "
+    , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
+    , fromString " "
+    , fromString (postgresUniverseTypeId (Proxy :: Proxy (ColumnType column)))
+    ]
+
+addConstraintUniqueQuery
+    :: ( IsString m
+       , Monoid m
+       , KnownSymbol tableName
+       , KnownSymbol columnName
+       )
+    => Proxy tableName
+    -> Proxy columnName
+    -> m
+addConstraintUniqueQuery proxyTableName proxyColumnName = mconcat [
+      fromString "ALTER TABLE "
+    , fromString (symbolVal proxyTableName)
+    , fromString " ADD CONSTRAINT "
+    , constraintName
+    , fromString " UNIQUE ("
+    , fromString (symbolVal proxyColumnName)
+    , fromString ")"
+    ]
+  where
+    constraintName = mconcat [
+          fromString "unique_"
+        , fromString (symbolVal proxyTableName)
+        , fromString "_"
+        , fromString (symbolVal proxyColumnName)
+        ]
+
+addConstraintNotNullQuery
+    :: ( IsString m
+       , Monoid m
+       , KnownSymbol tableName
+       , KnownSymbol columnName
+       )
+    => Proxy tableName
+    -> Proxy columnName
+    -> m
+addConstraintNotNullQuery proxyTableName proxyColumnName = mconcat [
+      fromString "ALTER TABLE "
+    , fromString (symbolVal proxyTableName)
+    , fromString " ADD CONSTRAINT "
+    , constraintName
+    , fromString " NOT NULL ("
+    , fromString (symbolVal proxyColumnName)
+    , fromString ")"
+    ]
+  where
+    constraintName = mconcat [
+          fromString "not_null_"
+        , fromString (symbolVal proxyTableName)
+        , fromString "_"
+        , fromString (symbolVal proxyColumnName)
+        ]
+
+addConstraintDefaultQuery
+    :: ( IsString m
+       , Monoid m
+       , KnownSymbol tableName
+       , KnownSymbol columnName
+       )
+    => Proxy tableName
+    -> Proxy columnName
+    -> m
+addConstraintDefaultQuery proxyTableName proxyColumnName = mconcat [
+      fromString "ALTER TABLE "
+    , fromString (symbolVal proxyTableName)
+    , fromString " ALTER COLUMN "
+    , fromString (symbolVal proxyColumnName)
+    , fromString " SET DEFAULT ?"
+    ]
+
 -- |
 -- = Generating queries
 --
@@ -445,7 +563,7 @@ instance {-# OVERLAPS #-}
     , KnownSymbol (ColumnName column)
     , KnownSymbol alias
     , MakeProjectClauses rest m
-    ) => MakeProjectClauses (PROJECT (AS (COLUMN '(name, column)) alias) rest) m where
+    ) => MakeProjectClauses (PROJECT (AS (FIELD '(name, column)) alias) rest) m where
     makeProjectClauses _ = mconcat [
           mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy name)), fromString "\""]
         , fromString "."
@@ -457,10 +575,23 @@ instance {-# OVERLAPS #-}
 instance {-# OVERLAPS #-}
     ( Monoid m
     , IsString m
+    , KnownSymbol name
+    , KnownSymbol (ColumnName column)
+    , MakeProjectClauses rest m
+    ) => MakeProjectClauses (PROJECT (FIELD '(name, column)) rest) m where
+    makeProjectClauses _ = mconcat [
+          mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy name)), fromString "\""]
+        , fromString "."
+        , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy (ColumnName column))), fromString "\""]
+        ] : makeProjectClauses (Proxy :: Proxy rest)
+
+instance {-# OVERLAPS #-}
+    ( Monoid m
+    , IsString m
     , KnownSymbol alias
     , MakeProjectClauses rest m
     , MakeColumnsClauses columns m
-    ) => MakeProjectClauses (PROJECT (AS (COUNT (COLUMNS columns)) alias) rest) m
+    ) => MakeProjectClauses (PROJECT (AS (COUNT (FIELDS columns)) alias) rest) m
   where
     makeProjectClauses _ = mconcat [
           fromString "COUNT("
@@ -505,7 +636,7 @@ instance
     , KnownSymbol (TableName table)
     ) => MakeQuery (TABLE table) m
   where
-    makeQuery (TABLE proxyTable) = mconcat [
+    makeQuery TABLE = mconcat [
           fromString "\""
         , fromString (symbolVal (Proxy :: Proxy (TableName table)))
         , fromString "\""
@@ -744,7 +875,7 @@ instance
     , IsString m
     , KnownSymbol columnName
     , KnownSymbol tableName
-    ) => MakeQuery (COLUMN '(tableName, '(columnName, ty))) m
+    ) => MakeQuery (FIELD '(tableName, '(columnName, ty))) m
   where
     makeQuery _ = mconcat [
           fromString "\""
@@ -1100,15 +1231,15 @@ instance
     (
     ) => MakeQueryParameters PostgresUniverse (VALUE value)
   where
-    type QueryParametersType PostgresUniverse (VALUE value) = value
+    type QueryParametersType PostgresUniverse (VALUE value) = Identity value
     makeQueryParameters _ term = case term of
-        VALUE x -> x
+        VALUE x -> Identity x
 
 instance
     (
-    ) => MakeQueryParameters PostgresUniverse (COLUMN column)
+    ) => MakeQueryParameters PostgresUniverse (FIELD column)
   where
-    type QueryParametersType PostgresUniverse (COLUMN column) = ()
+    type QueryParametersType PostgresUniverse (FIELD field) = ()
     makeQueryParameters _ _ = ()
 
 -- |
@@ -1178,6 +1309,12 @@ instance
 -- successfully interpreted by the RDBMS represented by the @universe@ type
 -- containing the relations described by the @database@ type.
 
+-- Some things to keep in mind:
+--
+-- - DELETE tables can be aliased, as in
+--     DELETE FROM users as u where u.uuid = ?
+-- - We can often leave out aliases, for tables or for columns in projects.
+-- - 
 class WellFormedQuery database universe term
 instance WellFormedQuery database universe term
 
@@ -1192,8 +1329,8 @@ class TerminalRestriction universe term where
 instance TerminalRestriction universe (VALUE ty) where
     type TerminalRestrictionType universe (VALUE ty) = ty
 
-instance TerminalRestriction universe (COLUMN '(tableName, column)) where
-    type TerminalRestrictionType universe (COLUMN '(tableName, column)) = ColumnType column
+instance TerminalRestriction universe (FIELD '(tableName, column)) where
+    type TerminalRestrictionType universe (FIELD '(tableName, column)) = ColumnType column
 
 -- Must be able to constrain a condition to make sense given the columns
 -- available. This seems like it'll be general enough to reuse in, say, an
@@ -1236,7 +1373,7 @@ instance
 
 instance
     ( Member '(tableName, column) form ~ True
-    ) => CompatibleRestriction PostgresUniverse form (COLUMN '(tableName, column))
+    ) => CompatibleRestriction PostgresUniverse form (FIELD '(tableName, column))
 
 
 
@@ -1340,7 +1477,7 @@ class
   where
     type RunRelationalCodomain database universe term :: *
     runRelational
-        :: Proxy database
+        :: DATABASE database
         -> universe
         -> term
         -> RunRelationalCodomain database universe term
@@ -1405,8 +1542,8 @@ instance
 
 type family ProjectTypes project :: [*] where
     ProjectTypes P = '[]
-    ProjectTypes (PROJECT (AS (COLUMN '(tableName, col)) alias) rest) = ColumnType col ': ProjectTypes rest
-    ProjectTypes (PROJECT (COUNT (COLUMNS columns)) rest) = PGInteger ': ProjectTypes rest
+    ProjectTypes (PROJECT (AS (FIELD '(tableName, col)) alias) rest) = ColumnType col ': ProjectTypes rest
+    ProjectTypes (PROJECT (COUNT (FIELDS columns)) rest) = PGInteger ': ProjectTypes rest
 
 -- | The prefix alias from an alias.
 type family AliasAlias (alias :: (Symbol, [Symbol])) :: Symbol where
@@ -1434,13 +1571,17 @@ type family AliasDistinctNames (alias :: (Symbol, [Symbol])) :: Bool where
 --   projection on this selectable.
 type family SelectableRowType project (selectableForm :: [(Symbol, (Symbol, *))]) :: [*] where
     SelectableRowType P form = '[]
-    SelectableRowType (PROJECT (AS (COLUMN '(tableName, col)) alias) right) form = SelectableLookup '(tableName, col, alias) form ': SelectableRowType right form
-    SelectableRowType (PROJECT (AS (COUNT (COLUMNS cols)) alias) right) form = PGInteger ': SelectableRowType right form
+    SelectableRowType (PROJECT (AS (FIELD '(tableName, col)) alias) right) form = SelectableLookup '(tableName, col, alias) form ': SelectableRowType right form
+    SelectableRowType (PROJECT (FIELD '(tableName, col)) right) form = SelectableLookup '(tableName, col, ColumnName col) form ': SelectableRowType right form
+    SelectableRowType (PROJECT (AS (COUNT (FIELDS cols)) alias) right) form = PGInteger ': SelectableRowType right form
 
 -- | Helper for SelectableRowType. Looks up the matching part of the
---   selectable form, according to alias prefix and column alias.
+--   selectable form, according to alias prefix and column alias (in fact,
+--   it requires the types to match as well).
 type family SelectableLookup (p :: (Symbol, (Symbol, *), Symbol)) (selectableForm :: [(Symbol, (Symbol, *))]) :: * where
     SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, ty)) ': rest ) = ty
+    -- This clause handles the case in which a field can be null.
+    SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, Maybe ty)) ': rest ) = Maybe ty
     SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, yt)) ': rest ) = SelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
 
 type family SelectableTypes (p :: [(Symbol, (Symbol, *))]) :: [*] where
@@ -1478,6 +1619,16 @@ instance
         TagFieldsUsingAlias
             (AliasAlias alias)
             (AliasColumnAliases alias)
+            (FieldTypes READ (TableSchema table) (SchemaColumns (TableSchema table)))
+
+instance
+    (
+    ) => Selectable (TABLE table)
+  where
+    type SelectableForm (TABLE table) =
+        TagFieldsUsingAlias
+            (TableName table)
+            (ColumnNames (SchemaColumns (TableSchema table)))
             (FieldTypes READ (TableSchema table) (SchemaColumns (TableSchema table)))
 
 -- | Here, the type of @values@ is determined by the alias columns, and the

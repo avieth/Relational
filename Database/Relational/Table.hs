@@ -35,7 +35,7 @@ import Database.Relational.Schema
 type Table (name :: Symbol) schema = '(name, schema)
 
 data TABLE (table :: (Symbol, ([(Symbol, *)], [(Symbol, *)], [([((Symbol, *), (Symbol, *))], Symbol)], [(Symbol, *)], [(Symbol, *)], [(Symbol, *)], [(Symbol, *)]))) where
-    TABLE :: Proxy table -> TABLE table
+    TABLE :: TABLE table
 
 type family TableName table :: Symbol where
     TableName '(name, schema) = name

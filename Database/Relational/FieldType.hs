@@ -44,17 +44,17 @@ data WriteOrRead where
 --   reading. They differ when the relevant column has a default, in which case
 --   Default may be given.
 type family FieldType (wor :: WriteOrRead) schema (column :: (Symbol, *)) :: * where
-    FieldType WRITE schema column = FieldTypeWrite column (IsNullable column schema)
-    FieldType READ schema column = FieldTypeRead column (IsNullable column schema) (IsDefault column schema)
+    FieldType READ schema column = FieldTypeRead column (IsNullable column schema)
+    FieldType WRITE schema column = FieldTypeWrite column (IsNullable column schema) (IsDefault column schema)
 
 type family FieldTypes (wor :: WriteOrRead) schema (columns :: [(Symbol, *)]) :: [*] where
     FieldTypes wor schema '[] = '[]
     FieldTypes wor schema (c ': cs) = FieldType wor schema c ': FieldTypes wor schema cs
 
-type family FieldTypeWrite (column :: (Symbol, *)) isNullable :: * where
-    FieldTypeWrite column True = Maybe (ColumnType column)
-    FieldTypeWrite column False = ColumnType column
+type family FieldTypeRead (column :: (Symbol, *)) isNullable :: * where
+    FieldTypeRead column True = Maybe (ColumnType column)
+    FieldTypeRead column False = ColumnType column
 
-type family FieldTypeRead (column :: (Symbol, *)) isNullable isDefault :: * where
-    FieldTypeRead column nullable True = Default (FieldTypeWrite column nullable)
-    FieldTypeRead column nullable False = FieldTypeWrite column nullable
+type family FieldTypeWrite (column :: (Symbol, *)) isNullable isDefault :: * where
+    FieldTypeWrite column nullable True = Default (FieldTypeRead column nullable)
+    FieldTypeWrite column nullable False = FieldTypeRead column nullable

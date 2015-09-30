@@ -20,3 +20,8 @@ module Database.Relational.Default (
 data Default term where
     DEFAULT :: Default term
     NOT_DEFAULT :: term -> Default term
+
+instance Functor Default where
+    fmap f term = case term of
+        DEFAULT -> DEFAULT
+        NOT_DEFAULT x -> NOT_DEFAULT (f x)

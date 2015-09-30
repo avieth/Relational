@@ -102,11 +102,11 @@ noCycles = undefined
 dbvalue :: DatabaseD UserDatabase PostgresUniverse (DatabaseTables UserDatabase)
 dbvalue = databaseD Proxy Proxy Proxy
 
-userTable :: Proxy UserTable
-userTable = Proxy
+userTable :: TABLE UserTable
+userTable = TABLE
 
-usernamesTable :: Proxy UsernameTable
-usernamesTable = Proxy
+usernamesTable :: TABLE UsernameTable
+usernamesTable = TABLE
 
 uuidColumn :: Proxy '("uuid", PGUUID)
 uuidColumn = Proxy
@@ -118,27 +118,24 @@ userDatabase :: Proxy UserDatabase
 userDatabase = Proxy
 
 insertNew uuid = INSERT
-                 (INTO (TABLE userTable))
+                 (INTO userTable)
                  (VALUES (Identity (PGUUID uuid)))
 
-deleteAll = DELETE (FROM (TABLE userTable))
+deleteAll = DELETE (FROM userTable)
 
 deleteUuid uuid = DELETE
-                  (FROM (TABLE userTable))
+                  (FROM userTable)
                   `WHERE`
-                  (   (COLUMN :: COLUMN '(TableName UserTable, UUIDColumn))
+                  (   (FIELD :: FIELD '(TableName UserTable, UUIDColumn))
                       .==.
                       (VALUE (PGUUID uuid))
                   )
 
 selectAllUsers = SELECT
-                 (      ((COLUMN :: COLUMN '("users", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
+                 (      ((FIELD :: FIELD '("users", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
                      |: P
                  )
-                 (FROM ((TABLE userTable)
-                        `AS`
-                        alias
-                       )
+                 (FROM (userTable `AS` alias)
                  )
   where
     uuid :: Proxy '("users", UUIDColumn, "uuid")
@@ -147,11 +144,11 @@ selectAllUsers = SELECT
     alias = Proxy
 
 selectAllUsernames = SELECT
-                     (      ((COLUMN :: COLUMN '("usernames", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
-                         |: ((COLUMN :: COLUMN '("usernames", UsernameColumn)) `AS` (Proxy :: Proxy "username"))
+                     (      ((FIELD :: FIELD '("usernames", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
+                         |: ((FIELD :: FIELD '("usernames", UsernameColumn)) `AS` (Proxy :: Proxy "username"))
                          |: P
                      )
-                     (FROM ((TABLE usernamesTable)
+                     (FROM (usernamesTable
                             `AS`
                             alias
                            )
@@ -165,17 +162,17 @@ selectAllUsernames = SELECT
     alias = Proxy
 
 selectJoin = SELECT
-             (      ((COLUMN :: COLUMN '("users", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
-                 |: ((COLUMN :: COLUMN '("usernames", UsernameColumn)) `AS` (Proxy :: Proxy "username"))
+             (      ((FIELD :: FIELD '("users", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
+                 |: ((FIELD :: FIELD '("usernames", UsernameColumn)) `AS` (Proxy :: Proxy "username"))
                  |: P
              )
              (FROM (((selectAllUsers `AS` aliasLeft)
                     `JOIN`
                     (selectAllUsernames `AS` aliasRight))
                     `ON`
-                    ((COLUMN :: COLUMN '("users", UUIDColumn))
+                    ((FIELD :: FIELD '("users", UUIDColumn))
                      .==.
-                     (COLUMN :: COLUMN '("usernames", UUIDColumn))
+                     (FIELD :: FIELD '("usernames", UUIDColumn))
                     )
                    )
              )
@@ -190,10 +187,10 @@ selectJoin = SELECT
     aliasRight = Proxy
 
 selectCount = SELECT
-              (      (COUNT (COLUMNS :: COLUMNS '[ '("users", UUIDColumn) ]) `AS` (Proxy :: Proxy "count"))
+              (      (COUNT (FIELDS :: FIELDS '[ '("users", UUIDColumn) ]) `AS` (Proxy :: Proxy "count"))
                   |: P
               )
-              (FROM (TABLE userTable `AS` (Proxy :: Proxy '("users", '["uuid"])))
+              (FROM (userTable `AS` (Proxy :: Proxy '("users", '["uuid"])))
               )
 
 selectUsersLimit proxyL proxyO = selectAllUsers `LIMIT` proxyL `OFFSET` proxyO

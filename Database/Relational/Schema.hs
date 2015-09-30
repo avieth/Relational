@@ -40,6 +40,7 @@ module Database.Relational.Schema (
     , IsNullable
     , IsDefault
     , ColumnIsOptional
+    , ColumnNames
 
     ) where
 

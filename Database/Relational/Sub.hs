@@ -26,10 +26,11 @@ module Database.Relational.Sub (
     ) where
 
 import Data.Proxy
+import Database.Relational.Column
 
 -- | Like project, but without a table name or alias on each member.
 data SUB left right where
-    SUB :: Proxy left -> right -> SUB left right
+    SUB :: COLUMN left -> right -> SUB left right
 
 data S = S
 

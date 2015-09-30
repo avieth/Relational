@@ -22,6 +22,8 @@ module Database.Relational.Column (
     , COLUMNS(..)
     , ColumnName
     , ColumnType
+    , FIELD(..)
+    , FIELDS(..)
 
     ) where
 
@@ -32,12 +34,10 @@ import Data.Proxy
 
 type Column (name :: Symbol) (t :: *) = '(name, t)
 
--- A column qualified by a table name.
-data COLUMN (column :: (Symbol, (Symbol, *))) where
-    COLUMN :: COLUMN '(tableName, column)
+data COLUMN (column :: (Symbol, *)) where
+    COLUMN :: COLUMN column
 
--- Columns, each qualified by a table name.
-data COLUMNS (columns :: [(Symbol, (Symbol, *))]) where
+data COLUMNS (columns :: [(Symbol, *)]) where
     COLUMNS :: COLUMNS columns
 
 type family ColumnName (column :: (Symbol, *)) :: Symbol where
@@ -45,3 +45,10 @@ type family ColumnName (column :: (Symbol, *)) :: Symbol where
 
 type family ColumnType (column :: (Symbol, *)) :: * where
     ColumnType '(name, t) = t
+
+-- | A column qualified by a table name.
+data FIELD (field :: (Symbol, (Symbol, *))) where
+    FIELD :: FIELD '(tableName, column)
+
+data FIELDS (fields :: [(Symbol, (Symbol, *))]) where
+    FIELDS :: FIELDS fields
