@@ -34,6 +34,8 @@ module Database.Relational.Schema (
     , ForeignKeyReferences
     , ForeignKeyReferenceLocal
     , ForeignKeyReferenceForeign
+    , ForeignKeyLocalColumns
+    , ForeignKeyForeignColumns
     , IsPrimaryKey
     , IsUnique
     , IsNotNull

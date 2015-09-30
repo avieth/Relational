@@ -73,7 +73,17 @@ import Database.Relational.Limit
 import Database.Relational.Offset
 import Database.Relational.Count
 import Database.Relational.Group
+import Database.Relational.Create
+import Database.Relational.Alter
+import Database.Relational.Add
+import Database.Relational.Constraint
+import Database.Relational.Name
+import Database.Relational.PrimaryKey
+import Database.Relational.ForeignKey
 import Database.Relational.Default
+import Database.Relational.Unique
+import Database.Relational.NotNull
+import Database.Relational.SetDefault
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
@@ -358,6 +368,54 @@ createTableQuery proxyTableName = mconcat [
     , " ()"
     ]
 
+createTable_ :: TABLE table -> CREATE (TABLE table)
+createTable_ table = CREATE table
+
+addColumn_
+    :: TABLE table
+    -> COLUMN column
+    -> ALTER (TABLE table) (ADD (COLUMN column))
+addColumn_ table column = ALTER table (ADD column)
+
+addPrimaryKey_
+    :: TABLE table
+    -> NAME name
+    -> COLUMNS columns
+    -> ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (PRIMARY_KEY (COLUMNS columns))))
+addPrimaryKey_ table name columns =
+    ALTER table (ADD (CONSTRAINT name (PRIMARY_KEY columns)))
+
+addForeignKey_
+    :: TABLE table
+    -> NAME name
+    -> COLUMNS localColumns
+    -> TABLE foreignTable
+    -> COLUMNS foreignColumns
+    -> ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (FOREIGN_KEY (COLUMNS localColumns) (TABLE foreignTable) (COLUMNS foreignColumns))))
+addForeignKey_ table name localColumns foreignTable foreignColumns =
+    ALTER table (ADD (CONSTRAINT name (FOREIGN_KEY localColumns foreignTable foreignColumns)))
+
+addUnique_
+    :: TABLE table
+    -> NAME name
+    -> COLUMNS columns
+    -> ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (UNIQUE (COLUMNS columns))))
+addUnique_ table name columns = ALTER table (ADD (CONSTRAINT name (UNIQUE columns)))
+
+addNotNull_
+    :: TABLE table
+    -> NAME name
+    -> COLUMNS columns
+    -> ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (NOT_NULL (COLUMNS columns))))
+addNotNull_ table name columns = ALTER table (ADD (CONSTRAINT name (NOT_NULL columns)))
+
+addDefault_
+    :: TABLE table
+    -> COLUMN column
+    -> ColumnType column
+    -> ALTER (TABLE table) (SET_DEFAULT (COLUMN column) (ColumnType column))
+addDefault_ table column value = ALTER table (SET_DEFAULT column value)
+
 addColumnQuery
     :: forall m table column .
        ( IsString m
@@ -467,17 +525,149 @@ addConstraintDefaultQuery proxyTableName proxyColumnName = mconcat [
 --   a where-qualified insertion, but that should never be used).
 class
     (
-    ) => MakeQuery term m
+    ) => MakeQuery universe term m
   where
-    makeQuery :: term -> m
+    makeQuery :: universe -> term -> m
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery universe (TABLE table) m
+    ) => MakeQuery universe (CREATE (TABLE table)) m
+  where
+    makeQuery proxy term = case term of
+        CREATE subterm -> mconcat [
+              fromString "CREATE TABLE "
+            , makeQuery proxy subterm
+            , fromString " ()"
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeQuery universe (TABLE table) m
+    , MakeQuery universe alteration m
+    ) => MakeQuery universe (ALTER (TABLE table) alteration) m
+  where
+    makeQuery proxy term = case term of
+        ALTER table alteration -> mconcat [
+              fromString "ALTER TABLE "
+            , makeQuery proxy table
+            , fromString " "
+            , makeQuery proxy alteration
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol (ColumnName column)
+    , PostgresUniverseConstraint (ColumnType column)
+    ) => MakeQuery PostgresUniverse (ADD (COLUMN column)) m
+  where
+    makeQuery proxy term = case term of
+        ADD subterm -> mconcat [
+              fromString "ADD COLUMN "
+            , fromString "\""
+            , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
+            , fromString "\" "
+            , fromString (postgresUniverseTypeId (Proxy :: Proxy (ColumnType column)))
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol name
+    , MakeQuery universe constraint m
+    ) => MakeQuery universe (ADD (CONSTRAINT (NAME name) constraint)) m
+  where
+    makeQuery universe term = case term of
+        ADD (CONSTRAINT NAME constraint) -> mconcat [
+              fromString "ADD CONSTRAINT \""
+            , fromString (symbolVal (Proxy :: Proxy name))
+            , fromString "\" "
+            , makeQuery universe constraint
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeColumnsClauses columns m
+    ) => MakeQuery universe (PRIMARY_KEY (COLUMNS columns)) m
+  where
+    makeQuery universe term = case term of
+        PRIMARY_KEY columns -> mconcat [
+              fromString "PRIMARY KEY ("
+            , mconcat (intersperse (fromString ", ") (makeColumnsClauses columns))
+            , fromString ")"
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeColumnsClauses localColumns m
+    , KnownSymbol (TableName foreignTable)
+    , MakeColumnsClauses foreignColumns m
+    ) => MakeQuery universe (FOREIGN_KEY (COLUMNS localColumns) (TABLE foreignTable) (COLUMNS foreignColumns)) m
+  where
+    makeQuery universe term = case term of
+        FOREIGN_KEY localColumns foreignTable foreignColumns -> mconcat [
+              fromString "FOREIGN KEY ("
+            , mconcat (intersperse (fromString ", ") (makeColumnsClauses localColumns))
+            , fromString ") REFERENCES \""
+            , fromString  (symbolVal (Proxy :: Proxy (TableName foreignTable)))
+            , fromString "\" ("
+            , mconcat (intersperse (fromString ", ") (makeColumnsClauses foreignColumns))
+            , fromString ")"
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeColumnsClauses columns m
+    ) => MakeQuery universe (UNIQUE (COLUMNS columns)) m
+  where
+    makeQuery universe term = case term of
+        UNIQUE columns -> mconcat [
+              fromString "UNIQUE ("
+            , mconcat (intersperse (fromString ", ") (makeColumnsClauses columns))
+            , fromString ")"
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , MakeColumnsClauses columns m
+    ) => MakeQuery universe (NOT_NULL (COLUMNS columns)) m
+  where
+    makeQuery universe term = case term of
+        NOT_NULL columns -> mconcat [
+              fromString "NOT_NULL ("
+            , mconcat (intersperse (fromString ", ") (makeColumnsClauses columns))
+            , fromString ")"
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol (ColumnName column)
+    , ty ~ ColumnType column
+    ) => MakeQuery universe (SET_DEFAULT (COLUMN column) ty) m
+  where
+    makeQuery universe term = case term of
+        SET_DEFAULT column _ -> mconcat [
+              fromString "ALTER COLUMN \""
+            , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
+            , fromString "\" SET DEFAULT ?"
+            ]
+    
 
 instance
     ( Monoid m
     , IsString m
     , MakeUpdateClauses (SUB left right) m
-    ) => MakeQuery (SUB left right) m
+    ) => MakeQuery universe (SUB left right) m
   where
-    makeQuery term = mconcat (intersperse (fromString ", ") (makeUpdateClauses term))
+    makeQuery proxy term = mconcat (intersperse (fromString ", ") (makeUpdateClauses term))
 
 -- Given a suitable thing (a PROJECT, as the instances show), make a list of
 -- strings where each string gives an assignment of some column name to a
@@ -518,9 +708,9 @@ instance
     ( Monoid m
     , IsString m
     , MakeValuesClauses (InverseRowType values) m
-    ) => MakeQuery (VALUES values) m
+    ) => MakeQuery universe (VALUES values) m
   where
-    makeQuery proxy = mconcat [
+    makeQuery proxy _ = mconcat [
           fromString "("
         , mconcat (intersperse (fromString ", ") (makeValuesClauses (Proxy :: Proxy (InverseRowType values))))
         , fromString ")"
@@ -543,9 +733,9 @@ instance
     ( Monoid m
     , IsString m
     , MakeProjectClauses (PROJECT left right) m
-    ) => MakeQuery (PROJECT left right) m
+    ) => MakeQuery universe (PROJECT left right) m
   where
-    makeQuery term = mconcat (intersperse (fromString ", ") (makeProjectClauses (Proxy :: Proxy (PROJECT left right))))
+    makeQuery proxy term = mconcat (intersperse (fromString ", ") (makeProjectClauses (Proxy :: Proxy (PROJECT left right))))
 
 class MakeProjectClauses project m where
     makeProjectClauses :: Proxy project -> [m]
@@ -590,12 +780,12 @@ instance {-# OVERLAPS #-}
     , IsString m
     , KnownSymbol alias
     , MakeProjectClauses rest m
-    , MakeColumnsClauses columns m
-    ) => MakeProjectClauses (PROJECT (AS (COUNT (FIELDS columns)) alias) rest) m
+    , MakeFieldsClauses fields m
+    ) => MakeProjectClauses (PROJECT (AS (COUNT (FIELDS fields)) alias) rest) m
   where
     makeProjectClauses _ = mconcat [
           fromString "COUNT("
-        , mconcat (intersperse (fromString ", ") (makeColumnsClauses (Proxy :: Proxy columns)))
+        , mconcat (intersperse (fromString ", ") (makeFieldsClauses (Proxy :: Proxy fields)))
         , fromString ") AS "
         , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy alias)), fromString "\""]
         ] : makeProjectClauses (Proxy :: Proxy rest)
@@ -605,7 +795,7 @@ class
     (
     ) => MakeColumnsClauses columns m
   where
-    makeColumnsClauses :: Proxy columns -> [m]
+    makeColumnsClauses :: COLUMNS columns -> [m]
 
 instance
     (
@@ -616,27 +806,52 @@ instance
 instance
     ( Monoid m
     , IsString m
-    , KnownSymbol tableName
     , KnownSymbol (ColumnName column)
-    , MakeColumnsClauses cs m
-    ) => MakeColumnsClauses ( '(tableName, column) ': cs) m
+    , MakeColumnsClauses columns m
+    ) => MakeColumnsClauses ( column ': columns ) m
   where
     makeColumnsClauses _ = mconcat [
+          fromString "\""
+        , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
+        , fromString "\""
+        ] : makeColumnsClauses (COLUMNS :: COLUMNS columns)
+
+class
+    (
+    ) => MakeFieldsClauses fields m
+  where
+    makeFieldsClauses :: Proxy fields -> [m]
+
+instance
+    (
+    ) => MakeFieldsClauses '[] m
+  where
+    makeFieldsClauses _ = []
+
+instance
+    ( Monoid m
+    , IsString m
+    , KnownSymbol tableName
+    , KnownSymbol (ColumnName column)
+    , MakeFieldsClauses cs m
+    ) => MakeFieldsClauses ( '(tableName, column) ': cs) m
+  where
+    makeFieldsClauses _ = mconcat [
           fromString "\""
         , fromString (symbolVal (Proxy :: Proxy tableName))
         , fromString "\".\""
         , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
         , fromString "\""
-        ] : makeColumnsClauses (Proxy :: Proxy cs)
+        ] : makeFieldsClauses (Proxy :: Proxy cs)
 
 
 instance
     ( Monoid m
     , IsString m
     , KnownSymbol (TableName table)
-    ) => MakeQuery (TABLE table) m
+    ) => MakeQuery universe (TABLE table) m
   where
-    makeQuery TABLE = mconcat [
+    makeQuery proxy TABLE = mconcat [
           fromString "\""
         , fromString (symbolVal (Proxy :: Proxy (TableName table)))
         , fromString "\""
@@ -645,120 +860,120 @@ instance
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery values m
-    , MakeQuery table m
-    ) => MakeQuery (INSERT (INTO table) values) m
+    , MakeQuery universe values m
+    , MakeQuery universe table m
+    ) => MakeQuery universe (INSERT (INTO table) values) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         INSERT (INTO table) values ->
             let queryString = mconcat [
                       (fromString "INSERT INTO ")
-                    , makeQuery table
+                    , makeQuery proxy table
                     , (fromString " VALUES ")
-                    , makeQuery values
+                    , makeQuery proxy values
                     ]
             in  queryString
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery table m
-    , MakeQuery sub m
-    ) => MakeQuery (UPDATE table sub values) m
+    , MakeQuery universe table m
+    , MakeQuery universe sub m
+    ) => MakeQuery universe (UPDATE table sub values) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         UPDATE table sub values -> mconcat [
               (fromString "UPDATE ")
-            , makeQuery table
+            , makeQuery proxy table
             , (fromString " SET ")
-            , makeQuery sub
+            , makeQuery proxy sub
             ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery table m
-    ) => MakeQuery (DELETE (FROM table)) m
+    , MakeQuery universe table m
+    ) => MakeQuery universe (DELETE (FROM table)) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         DELETE (FROM table) ->
             let queryString = mconcat [
                       (fromString "DELETE FROM ")
-                    , makeQuery table
+                    , makeQuery proxy table
                     ]
             in  queryString
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery project m
-    , MakeQuery from m
-    ) => MakeQuery (SELECT project (FROM from)) m
+    , MakeQuery universe project m
+    , MakeQuery universe from m
+    ) => MakeQuery universe (SELECT project (FROM from)) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         SELECT project (FROM from) ->
             let queryString = mconcat [
                       (fromString "SELECT ")
-                    , makeQuery project
+                    , makeQuery proxy project
                     , (fromString " FROM ")
-                    , makeQuery from
+                    , makeQuery proxy from
                     ]
             in  queryString
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (INTERSECT left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (INTERSECT left right) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         INTERSECT left right -> mconcat [
-              makeQuery left
+              makeQuery proxy left
             , fromString " INTERSECT "
-            , makeQuery right
+            , makeQuery proxy right
             ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (UNION left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (UNION left right) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         UNION left right -> mconcat [
-              makeQuery left
+              makeQuery proxy left
             , fromString " UNION "
-            , makeQuery right
+            , makeQuery proxy right
             ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (JOIN left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (JOIN left right) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         JOIN left right -> mconcat [
-              makeQuery left
+              makeQuery proxy left
             , fromString " JOIN "
-            , makeQuery right
+            , makeQuery proxy right
             ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (ON left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (ON left right) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         ON left right -> mconcat [
-              makeQuery left
+              makeQuery proxy left
             , fromString " ON "
-            , makeQuery right
+            , makeQuery proxy right
             ]
 
 instance
@@ -766,9 +981,9 @@ instance
     , IsString m
     , KnownSymbol (TableName table)
     , MakeTableAliasClause alias m
-    ) => MakeQuery (AS (TABLE table) alias) m
+    ) => MakeQuery universe (AS (TABLE table) alias) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         AS _ _ -> mconcat [
               (fromString (symbolVal (Proxy :: Proxy (TableName table))))
             , (fromString " AS ")
@@ -778,14 +993,14 @@ instance
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery (VALUES values) m
+    , MakeQuery universe (VALUES values) m
     , MakeTableAliasClause alias m
-    ) => MakeQuery (AS (VALUES values) alias) m
+    ) => MakeQuery universe (AS (VALUES values) alias) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         AS values alias -> mconcat [
               (fromString "(")
-            , makeQuery values
+            , makeQuery proxy values
             , (fromString ") AS ")
             , makeTableAliasClause (Proxy :: Proxy alias)
             ]
@@ -794,13 +1009,13 @@ instance
     ( Monoid m
     , IsString m
     , MakeTableAliasClause alias m
-    , MakeQuery (SELECT project (FROM thing)) m
-    ) => MakeQuery (AS (SELECT project (FROM thing)) alias) m
+    , MakeQuery universe (SELECT project (FROM thing)) m
+    ) => MakeQuery universe (AS (SELECT project (FROM thing)) alias) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         AS something _ -> mconcat [
               (fromString "(")
-            , makeQuery something
+            , makeQuery proxy something
             , (fromString ") AS ")
             , makeTableAliasClause (Proxy :: Proxy alias)
             ]
@@ -808,29 +1023,29 @@ instance
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery clause m
-    , MakeQuery restriction m
-    ) => MakeQuery (WHERE clause restriction) m
+    , MakeQuery universe clause m
+    , MakeQuery universe restriction m
+    ) => MakeQuery universe (WHERE clause restriction) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         WHERE clause restriction ->
             let queryString = mconcat [
-                      makeQuery clause
+                      makeQuery proxy clause
                     , (fromString " WHERE ")
-                    , makeQuery restriction
+                    , makeQuery proxy restriction
                     ]
             in  queryString
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery term m
+    , MakeQuery universe term m
     , KnownNat nat
-    ) => MakeQuery (LIMIT term nat) m
+    ) => MakeQuery universe (LIMIT term nat) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         LIMIT limited proxyNat -> mconcat [
-              makeQuery limited
+              makeQuery proxy limited
             , fromString " LIMIT "
             , fromString (show (natVal proxyNat))
             ]
@@ -838,13 +1053,13 @@ instance
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery term m
+    , MakeQuery universe term m
     , KnownNat nat
-    ) => MakeQuery (OFFSET term nat) m
+    ) => MakeQuery universe (OFFSET term nat) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         OFFSET offset proxyNat -> mconcat [
-              makeQuery offset
+              makeQuery proxy offset
             , fromString " OFFSET "
             , fromString (show (natVal proxyNat))
             ]
@@ -852,32 +1067,32 @@ instance
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery term m
-    , MakeColumnsClauses columns m
-    ) => MakeQuery (GROUP_BY term (COLUMNS columns)) m
+    , MakeQuery universe term m
+    , MakeFieldsClauses fields m
+    ) => MakeQuery universe (GROUP_BY term (FIELDS fields)) m
   where
-    makeQuery term = case term of
+    makeQuery proxy term = case term of
         GROUP_BY term columns -> mconcat [
-              makeQuery term
+              makeQuery proxy term
             , fromString " GROUP BY "
-            , mconcat (intersperse (fromString ", ") (makeColumnsClauses (Proxy :: Proxy columns)))
+            , mconcat (intersperse (fromString ", ") (makeFieldsClauses (Proxy :: Proxy fields)))
             ]
 
 
 instance
     ( IsString m
-    ) => MakeQuery (VALUE ty) m
+    ) => MakeQuery universe (VALUE ty) m
   where
-    makeQuery (VALUE x) = fromString "?"
+    makeQuery proxy (VALUE x) = fromString "?"
 
 instance
     ( Monoid m
     , IsString m
     , KnownSymbol columnName
     , KnownSymbol tableName
-    ) => MakeQuery (FIELD '(tableName, '(columnName, ty))) m
+    ) => MakeQuery universe (FIELD '(tableName, '(columnName, ty))) m
   where
-    makeQuery _ = mconcat [
+    makeQuery proxy _ = mconcat [
           fromString "\""
         , fromString (symbolVal (Proxy :: Proxy tableName))
         , fromString "\".\""
@@ -888,93 +1103,93 @@ instance
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (AND left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (AND left right) m
   where
-    makeQuery (AND left right) = mconcat [
+    makeQuery proxy (AND left right) = mconcat [
           fromString "("
-        , makeQuery left
+        , makeQuery proxy left
         , fromString ") AND ("
-        , makeQuery right
+        , makeQuery proxy right
         , fromString ")"
         ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (OR left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (OR left right) m
   where
-    makeQuery (OR left right) = mconcat [
+    makeQuery proxy (OR left right) = mconcat [
           fromString "("
-        , makeQuery left
+        , makeQuery proxy left
         , fromString ") OR ("
-        , makeQuery right
+        , makeQuery proxy right
         , fromString ")"
         ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery term m
-    ) => MakeQuery (NOT term) m
+    , MakeQuery universe term m
+    ) => MakeQuery universe (NOT term) m
   where
-    makeQuery (NOT term) = mconcat [
+    makeQuery proxy (NOT term) = mconcat [
           fromString "NOT ("
-        , makeQuery term
+        , makeQuery proxy term
         , fromString ")"
         ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (EQUAL left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (EQUAL left right) m
   where
-    makeQuery (EQUAL left right) = mconcat [
+    makeQuery proxy (EQUAL left right) = mconcat [
           fromString "("
-        , makeQuery left
+        , makeQuery proxy left
         , fromString ") = ("
-        , makeQuery right
+        , makeQuery proxy right
         , fromString ")"
         ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (LESSTHAN left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (LESSTHAN left right) m
   where
-    makeQuery (LESSTHAN left right) = mconcat [
+    makeQuery proxy (LESSTHAN left right) = mconcat [
           fromString "("
-        , makeQuery left
+        , makeQuery proxy left
         , fromString ") < ("
-        , makeQuery right
+        , makeQuery proxy right
         , fromString ")"
         ]
 
 instance
     ( Monoid m
     , IsString m
-    , MakeQuery left m
-    , MakeQuery right m
-    ) => MakeQuery (GREATERTHAN left right) m
+    , MakeQuery universe left m
+    , MakeQuery universe right m
+    ) => MakeQuery universe (GREATERTHAN left right) m
   where
-    makeQuery (GREATERTHAN left right) = mconcat [
+    makeQuery proxy (GREATERTHAN left right) = mconcat [
           fromString "("
-        , makeQuery left
+        , makeQuery proxy left
         , fromString ") > ("
-        , makeQuery right
+        , makeQuery proxy right
         , fromString ")"
         ]
 
 -- | This class is for generating a table alias clause: table alias plus aliases
 --   for its columns.
---   We don't use MakeQuery for the aliases because they don't have their
+--   We don't use MakeQuery universe for the aliases because they don't have their
 --   own types like PROJECT, SUB, or VALUES; they are just any type of kind
 --   (Symbol, [Symbol]).
 class
@@ -1031,6 +1246,74 @@ class MakeQueryParameters universe term where
         :: universe
         -> term
         -> QueryParametersType universe term
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (CREATE (TABLE table))
+  where
+    type QueryParametersType PostgresUniverse (CREATE (TABLE table)) = ()
+    makeQueryParameters _ _ = ()
+
+instance
+    ( MakeQueryParameters PostgresUniverse alteration
+    ) => MakeQueryParameters PostgresUniverse (ALTER (TABLE table) alteration)
+  where
+    type QueryParametersType PostgresUniverse (ALTER (TABLE table) alteration) =
+        QueryParametersType PostgresUniverse alteration
+    makeQueryParameters universe term = case term of
+        ALTER _ alteration -> makeQueryParameters universe alteration
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (ADD (COLUMN column))
+  where
+    type QueryParametersType PostgresUniverse (ADD (COLUMN column)) = ()
+    makeQueryParameters _ _ = ()
+
+instance
+    ( MakeQueryParameters PostgresUniverse constraint
+    ) => MakeQueryParameters PostgresUniverse (ADD (CONSTRAINT name constraint))
+  where
+    type QueryParametersType PostgresUniverse (ADD (CONSTRAINT name constraint)) =
+        QueryParametersType PostgresUniverse constraint
+    makeQueryParameters universe term = case term of
+        ADD (CONSTRAINT _ constraint) -> makeQueryParameters universe constraint
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (PRIMARY_KEY (COLUMNS columns))
+  where
+    type QueryParametersType PostgresUniverse (PRIMARY_KEY (COLUMNS columns)) = ()
+    makeQueryParameters _ _ = ()
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (FOREIGN_KEY (COLUMNS localColumns) (TABLE foreignTable) (COLUMNS foreignColumns))
+  where
+    type QueryParametersType PostgresUniverse (FOREIGN_KEY (COLUMNS localColumns) (TABLE foreignTable) (COLUMNS foreignColumns)) = ()
+    makeQueryParameters _ _ = ()
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (UNIQUE (COLUMNS columns))
+  where
+    type QueryParametersType PostgresUniverse (UNIQUE (COLUMNS columns)) = ()
+    makeQueryParameters _ _ = ()
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (NOT_NULL (COLUMNS columns))
+  where
+    type QueryParametersType PostgresUniverse (NOT_NULL (COLUMNS columns)) = ()
+    makeQueryParameters _ _ = ()
+
+instance
+    (
+    ) => MakeQueryParameters PostgresUniverse (SET_DEFAULT (COLUMN column) ty)
+  where
+    type QueryParametersType PostgresUniverse (SET_DEFAULT (COLUMN column) ty) = ty
+    makeQueryParameters _ term = case term of
+        SET_DEFAULT _ x -> x
 
 instance
     (
@@ -1247,6 +1530,34 @@ instance
 
 class QueryOutput universe term where
     type QueryOutputType universe term :: (WriteOrRead, *)
+
+instance
+    (
+    ) => QueryOutput PostgresUniverse (CREATE (TABLE table))
+  where
+    type QueryOutputType PostgresUniverse (CREATE (TABLE table)) =
+        '(WRITE, Int64)
+
+instance
+    (
+    ) => QueryOutput PostgresUniverse (ALTER (TABLE table) alteration)
+  where
+    type QueryOutputType PostgresUniverse (ALTER (TABLE table) alteration) =
+        '(WRITE, Int64)
+
+instance
+    (
+    ) => QueryOutput PostgresUniverse (ADD (COLUMN column))
+  where
+    type QueryOutputType PostgresUniverse (ADD (COLUMN column)) =
+        '(WRITE, Int64)
+
+instance
+    (
+    ) => QueryOutput PostgresUniverse (ADD (CONSTRAINT name constraint))
+  where
+    type QueryOutputType PostgresUniverse (ADD (CONSTRAINT name constraint)) =
+        '(WRITE, Int64)
 
 instance
     ( Selectable selectable
@@ -1486,7 +1797,7 @@ instance
    ( WellFormedDatabase database
    , SafeDatabase database PostgresUniverse
    , WellFormedQuery database PostgresUniverse term
-   , MakeQuery term Query
+   , MakeQuery PostgresUniverse term Query
    , MakeQueryParameters PostgresUniverse term
    , QueryOutput PostgresUniverse term
    , PGAction (QueryOutputType PostgresUniverse term) (QueryParametersType PostgresUniverse term)
@@ -1497,7 +1808,7 @@ instance
        ReaderT Connection IO (PGActionOutput (QueryOutputType PostgresUniverse term) (QueryParametersType PostgresUniverse term))
    runRelational _ universe term = do
        connection <- ask
-       lift $ pgAction (Proxy :: Proxy (QueryOutputType PostgresUniverse term)) connection (makeQuery term) (makeQueryParameters universe term)
+       lift $ pgAction (Proxy :: Proxy (QueryOutputType PostgresUniverse term)) connection (makeQuery universe term) (makeQueryParameters universe term)
 
 -- Plan for selection in the presence of joins, unions, intersections:
 -- we need some way to get the "schema" of a relation, i.e. the columns (their
