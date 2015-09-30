@@ -44,8 +44,8 @@ data WriteOrRead where
 --   reading. They differ when the relevant column has a default, in which case
 --   Default may be given.
 type family FieldType (wor :: WriteOrRead) schema (column :: (Symbol, *)) :: * where
-    FieldType WRITE schema column = FieldTypeWrite column (IsNullable (ColumnName column) schema)
-    FieldType READ schema column = FieldTypeRead column (IsNullable (ColumnName column) schema) (IsDefault (ColumnName column) schema)
+    FieldType WRITE schema column = FieldTypeWrite column (IsNullable column schema)
+    FieldType READ schema column = FieldTypeRead column (IsNullable column schema) (IsDefault column schema)
 
 type family FieldTypes (wor :: WriteOrRead) schema (columns :: [(Symbol, *)]) :: [*] where
     FieldTypes wor schema '[] = '[]

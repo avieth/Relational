@@ -37,11 +37,11 @@ import Database.Relational.Table
 import Database.Relational.Database
 import Database.Relational.Universe
 
-data ForeignKeyReferencesD (refs :: [(Symbol, Symbol)]) where
+data ForeignKeyReferencesD (refs :: [((Symbol, *), (Symbol, *))]) where
     ForeignKeyReferencesDNil :: ForeignKeyReferencesD '[]
     ForeignKeyReferencesDCons
-        :: ( KnownSymbol (ForeignKeyReferenceLocal ref)
-           , KnownSymbol (ForeignKeyReferenceForeign ref)
+        :: ( KnownSymbol (ColumnName (ForeignKeyReferenceLocal ref))
+           , KnownSymbol (ColumnName (ForeignKeyReferenceForeign ref))
            )
         => Proxy ref
         -> ForeignKeyReferencesD refs 
@@ -60,8 +60,8 @@ instance
     foreignKeyReferencesD _ = ForeignKeyReferencesDNil
 
 instance
-    ( KnownSymbol (ForeignKeyReferenceLocal ref)
-    , KnownSymbol (ForeignKeyReferenceForeign ref)
+    ( KnownSymbol (ColumnName (ForeignKeyReferenceLocal ref))
+    , KnownSymbol (ColumnName (ForeignKeyReferenceForeign ref))
     , ForeignKeyReferencesValue refs
     ) => ForeignKeyReferencesValue (ref ': refs)
   where

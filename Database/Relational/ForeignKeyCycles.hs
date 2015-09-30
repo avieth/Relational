@@ -41,7 +41,7 @@ import Database.Relational.Table
 --   have foreign keys which reference their own table, and loops will be
 --   detected; you could have foreign keys which don't include any columns (just
 --   a foreign table name) and they can still take part in loops.
-type family ForeignKeyCycles database :: [(Symbol, [([(Symbol, Symbol)], Symbol)])] where
+type family ForeignKeyCycles database :: [(Symbol, [([((Symbol, *), (Symbol, *))], Symbol)])] where
     ForeignKeyCycles '(name, tables) =
         PickJust (FindForeignKeyCycles tables tables)
 
@@ -53,7 +53,7 @@ type family ForeignKeyCycles database :: [(Symbol, [([(Symbol, Symbol)], Symbol)
 --
 --   @allTables@ - all tables in the database.
 --   @tables@ - the tables that have not yet been searched.
-type family FindForeignKeyCycles allTables tables :: [Maybe (Symbol, [([(Symbol, Symbol)], Symbol)])] where
+type family FindForeignKeyCycles allTables tables :: [Maybe (Symbol, [([((Symbol, *), (Symbol, *))], Symbol)])] where
     FindForeignKeyCycles allTables '[] = '[]
     FindForeignKeyCycles allTables (table ': tables) =
         Append
@@ -67,7 +67,7 @@ type family FindForeignKeyCycles allTables tables :: [Maybe (Symbol, [([(Symbol,
 --   @tableName@ - the name of the table under inspection (we're looking for
 --                 a cycle beginning at this table).
 --   @fkeys@ - all foreign keys for the table under inspection.
-type family FindForeignKeyCycle allTables tableName fkeys :: [Maybe (Symbol, [([(Symbol, Symbol)], Symbol)])] where
+type family FindForeignKeyCycle allTables tableName fkeys :: [Maybe (Symbol, [([((Symbol, *), (Symbol, *))], Symbol)])] where
     FindForeignKeyCycle allTables tableName '[] = '[]
     FindForeignKeyCycle allTables tableName (fkey ': fkeys) =
         Append
@@ -87,7 +87,7 @@ type family FindForeignKeyCycle allTables tableName fkeys :: [Maybe (Symbol, [([
 --                 to witness the cycle in the output type.
 --   @fkeyCurrent@ - the current foreign key, which will go at the top of the
 --                   prefix @fkeyTrace@.
-type family TraceForeignKeyCycle allTables tableName fkeyTrace fkeyCurrent :: [Maybe (Symbol, [([(Symbol, Symbol)], Symbol)])] where
+type family TraceForeignKeyCycle allTables tableName fkeyTrace fkeyCurrent :: [Maybe (Symbol, [([((Symbol, *), (Symbol, *))], Symbol)])] where
     -- In this case we've found a cycle. We place the current foreign key at
     -- the head of the list, because if it's a loop (foreign key referencing
     -- own table) we want to give a non-empty list.
@@ -102,7 +102,7 @@ type family TraceForeignKeyCycle allTables tableName fkeyTrace fkeyCurrent :: [M
     TraceForeignKeyCycle allTables tableName fkeyTrace '(associations, otherName) = 
         BindAndContinueTrace allTables tableName ( '(associations, otherName) ': fkeyTrace ) (SchemaForeignKeys (TableSchema (LookupTable otherName allTables)))
 
-type family BindAndContinueTrace allTables tableName fkeyTrace fkeys :: [Maybe (Symbol, [([(Symbol, Symbol)], Symbol)])] where
+type family BindAndContinueTrace allTables tableName fkeyTrace fkeys :: [Maybe (Symbol, [([((Symbol, *), (Symbol, *))], Symbol)])] where
     BindAndContinueTrace allTables tableName fkeyTrace '[] = '[Nothing]
     BindAndContinueTrace allTables tableName fkeyTrace (fkey ': fkeys) =
         Append

@@ -64,12 +64,12 @@ type UserSchema
       UserCheck
       UserDeflt
 type UserColumns = '[ UUIDColumn ]
-type UserPrimaryKey = '[ "uuid" ]
+type UserPrimaryKey = '[ UUIDColumn ]
 type UserForeignKey = '[]
 -- This foreign key induces a cycle and is caught by our type program!!
 --type UserForeignKey = '[ '( '[ '("uuid", "uuid") ] , "usernames") ]
-type UserUnique = '[ "uuid" ]
-type UserNotNull = '[ "uuid" ]
+type UserUnique = '[ UUIDColumn ]
+type UserNotNull = '[ UUIDColumn ]
 type UserCheck = '[]
 type UserDeflt = '[]
 
@@ -84,10 +84,10 @@ type UsernameSchema
       UsernameCheck
       UsernameDeflt
 type UsernameColumns = '[ UUIDColumn, UsernameColumn ]
-type UsernamePrimaryKey = '[ "uuid" ]
-type UsernameForeignKey = '[ '( '[ '("uuid", "uuid") ], "users") ]
-type UsernameUnique = '[ "uuid", "username" ]
-type UsernameNotNull = '[ "uuid", "username" ]
+type UsernamePrimaryKey = '[ UUIDColumn ]
+type UsernameForeignKey = '[ '( '[ '(UUIDColumn, UUIDColumn) ], TableName UserTable) ]
+type UsernameUnique = '[ UUIDColumn, UsernameColumn ]
+type UsernameNotNull = '[ UUIDColumn, UsernameColumn ]
 type UsernameCheck = '[]
 type UsernameDeflt = '[]
 

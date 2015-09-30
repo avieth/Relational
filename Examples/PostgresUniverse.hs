@@ -80,6 +80,7 @@ import Data.UUID (UUID)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy.Builder as BT
 import Data.Int
+import Data.Time.LocalTime
 
 -- |
 -- = Types
@@ -110,6 +111,9 @@ newtype PGText = PGText T.Text
 newtype PGUUID = PGUUID UUID
   deriving (Show, FromField, ToField)
 
+newtype PGZonedTimestamp = PGZonedTimestamp ZonedTime
+  deriving (Show, FromField, ToField)
+
 instance PostgresUniverseConstraint PGBool where
     postgresUniverseTypeId _ = "bool"
 
@@ -124,6 +128,9 @@ instance PostgresUniverseConstraint PGUUID where
 
 instance PostgresUniverseConstraint PGText where
     postgresUniverseTypeId _ = "text"
+
+instance PostgresUniverseConstraint PGZonedTimestamp where
+    postgresUniverseTypeId _ = "timestamp with time zone"
 
 instance RelationalUniverse PostgresUniverse where
     type RelationalUniverseConstraint PostgresUniverse = PostgresUniverseConstraint
@@ -260,7 +267,9 @@ primaryKeyColumnsStrings
     -> [String]
 primaryKeyColumnsStrings primarykeyd = case primarykeyd of
     PrimaryKeyDNil -> []
-    PrimaryKeyDCons proxy rest -> symbolVal proxy : primaryKeyColumnsStrings rest
+    PrimaryKeyDCons (proxy :: Proxy col) rest ->
+          symbolVal (Proxy :: Proxy (ColumnName col))
+        : primaryKeyColumnsStrings rest
 
 createForeignKeys
     :: forall database table foreignKeys .
@@ -317,7 +326,7 @@ foreignKeyReferenceColumnsStrings
 foreignKeyReferenceColumnsStrings foreignKeyReferenced = case foreignKeyReferenced of
     ForeignKeyReferencesDNil -> []
     ForeignKeyReferencesDCons (proxy :: Proxy ref) rest ->
-          (symbolVal (Proxy :: Proxy (ForeignKeyReferenceLocal ref)), symbolVal (Proxy :: Proxy (ForeignKeyReferenceForeign ref)))
+          (symbolVal (Proxy :: Proxy (ColumnName (ForeignKeyReferenceLocal ref))), symbolVal (Proxy :: Proxy (ColumnName (ForeignKeyReferenceForeign ref))))
         : (foreignKeyReferenceColumnsStrings rest)
 
 -- |
@@ -1559,83 +1568,3 @@ instance
                 (AliasColumnAliases aliasRight)
                 (ProjectTypes projectRight)
             )
-
-
-
-type Table1 = Table "table1" (Schema '[] '[] '[] '[] '[] '[] '[])
-table1 :: Proxy Table1
-table1 = Proxy
-restriction1 = EQUAL (VALUE 1) (VALUE 2)
-restriction2 = NOT (AND (restriction1) (restriction1))
-delete1 = DELETE (FROM (TABLE table1)) `WHERE` restriction2
-project1 = (Proxy :: Proxy '("foo", '("a", Integer), "bar")) |: P
-select1 = SELECT project1 (FROM (TABLE table1))
-intersect1 = select1 `INTERSECT` select1
-
-{-
-class
-    (
-    ) => PGMakeValuesWildcardString values
-  where
-    pgMakeValuesWildcardString :: Proxy values -> String
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (Identity t)
-  where
-    pgMakeValuesWildcardString _ = "(?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2)
-  where
-    pgMakeValuesWildcardString _ = "(?,?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2, t3)
-  where
-    pgMakeValuesWildcardString _ = "(?,?,?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2, t3, t4)
-  where
-    pgMakeValuesWildcardString _ = "(?,?,?,?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5)
-  where
-    pgMakeValuesWildcardString _ = "(?,?,?,?,?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6)
-  where
-    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6, t7)
-  where
-    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?,?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6, t7, t8)
-  where
-    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?,?,?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6, t7, t8, t9)
-  where
-    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?,?,?,?)"
-
-instance
-    (
-    ) => PGMakeValuesWildcardString (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10)
-  where
-    pgMakeValuesWildcardString _ = "(?,?,?,?,?,?,?,?,?,?)"
--}

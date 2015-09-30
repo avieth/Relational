@@ -43,12 +43,12 @@ data PrimaryKeyD database universe schema primaryKey where
     PrimaryKeyDCons
         :: ( RelationalUniverse universe
            , SafeDatabase database universe
-           , KnownSymbol name
-           , WellFormedPrimaryKey (name ': pkeys) schema
+           , KnownSymbol (ColumnName column)
+           , WellFormedPrimaryKey (column ': pkeys) schema
            )
-        => Proxy name
+        => Proxy column
         -> PrimaryKeyD database universe schema pkeys
-        -> PrimaryKeyD database universe schema (name ': pkeys)
+        -> PrimaryKeyD database universe schema (column ': pkeys)
 
 class
     ( RelationalUniverse universe
@@ -72,12 +72,12 @@ instance
 instance
     ( RelationalUniverse universe
     , SafeDatabase database universe
-    , KnownSymbol name
-    , WellFormedPrimaryKey (name ': rest) schema
+    , KnownSymbol (ColumnName column)
+    , WellFormedPrimaryKey (column ': rest) schema
     , PrimaryKeyValue database universe schema rest
-    ) => PrimaryKeyValue database universe schema (name ': rest)
+    ) => PrimaryKeyValue database universe schema (column ': rest)
   where
     primaryKeyD proxyDB proxyU proxySchema _ =
         PrimaryKeyDCons
-            (Proxy :: Proxy name)
+            (Proxy :: Proxy column)
             (primaryKeyD proxyDB proxyU proxySchema (Proxy :: Proxy rest))
