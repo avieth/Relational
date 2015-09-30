@@ -42,6 +42,8 @@ import Database.Relational.Intersect
 import Database.Relational.Union
 import Database.Relational.Join
 import Database.Relational.Count
+import Database.Relational.Limit
+import Database.Relational.Offset
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
 import Data.Functor.Identity
@@ -193,3 +195,5 @@ selectCount = SELECT
               )
               (FROM (TABLE userTable `AS` (Proxy :: Proxy '("users", '["uuid"])))
               )
+
+selectUsersLimit proxyL proxyO = selectAllUsers `LIMIT` proxyL `OFFSET` proxyO
