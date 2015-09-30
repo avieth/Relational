@@ -84,7 +84,7 @@ import Data.Int
 -- |
 -- = Types
 
-data PostgresUniverse
+data PostgresUniverse = PostgresUniverse
 
 class
     ( ToField t
@@ -888,7 +888,7 @@ instance
 class MakeQueryParameters universe term where
     type QueryParametersType universe term :: *
     makeQueryParameters
-        :: Proxy universe
+        :: universe
         -> term
         -> QueryParametersType universe term
 
@@ -1274,7 +1274,7 @@ class
     type RunRelationalCodomain database universe term :: *
     runRelational
         :: Proxy database
-        -> Proxy universe
+        -> universe
         -> term
         -> RunRelationalCodomain database universe term
 
@@ -1291,9 +1291,9 @@ instance
  where
    type RunRelationalCodomain database PostgresUniverse term =
        ReaderT Connection IO (PGActionOutput (QueryOutputType PostgresUniverse term) (QueryParametersType PostgresUniverse term))
-   runRelational _ proxyU term = do
+   runRelational _ universe term = do
        connection <- ask
-       lift $ pgAction (Proxy :: Proxy (QueryOutputType PostgresUniverse term)) connection (makeQuery term) (makeQueryParameters proxyU term)
+       lift $ pgAction (Proxy :: Proxy (QueryOutputType PostgresUniverse term)) connection (makeQuery term) (makeQueryParameters universe term)
 
 -- Plan for selection in the presence of joins, unions, intersections:
 -- we need some way to get the "schema" of a relation, i.e. the columns (their
@@ -1368,13 +1368,13 @@ type family AliasDistinctNames (alias :: (Symbol, [Symbol])) :: Bool where
 type family SelectableRowType project (selectableForm :: [(Symbol, (Symbol, *))]) :: [*] where
     SelectableRowType P form = '[]
     SelectableRowType (PROJECT (AS (COLUMN '(tableName, col)) alias) right) form = SelectableLookup '(tableName, col, alias) form ': SelectableRowType right form
-    SelectableRowType (PROJECT (COUNT (COLUMNS cols)) right) form = PGInteger ': SelectableRowType right form
+    SelectableRowType (PROJECT (AS (COUNT (COLUMNS cols)) alias) right) form = PGInteger ': SelectableRowType right form
 
 -- | Helper for SelectableRowType. Looks up the matching part of the
 --   selectable form, according to alias prefix and column alias.
 type family SelectableLookup (p :: (Symbol, (Symbol, *), Symbol)) (selectableForm :: [(Symbol, (Symbol, *))]) :: * where
     SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, ty)) ': rest ) = ty
-    SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, ty)) ': rest ) = SelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
+    SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, yt)) ': rest ) = SelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
 
 type family SelectableTypes (p :: [(Symbol, (Symbol, *))]) :: [*] where
     SelectableTypes '[] = '[]
