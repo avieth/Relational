@@ -1172,6 +1172,64 @@ instance
 class WellFormedQuery database universe term
 instance WellFormedQuery database universe term
 
+-- | This class identifies those terms which can serve as terminal elements of
+--   a restriction clause, i.e. not logical connectives like AND and OR.
+--   It comes with an associated type: the type of thing at this terminus,
+--   which is useful in order to guarantee well-typedness of restriction
+--   clauses.
+class TerminalRestriction universe term where
+    type TerminalRestrictionType universe term :: *
+
+instance TerminalRestriction universe (VALUE ty) where
+    type TerminalRestrictionType universe (VALUE ty) = ty
+
+instance TerminalRestriction universe (COLUMN '(tableName, column)) where
+    type TerminalRestrictionType universe (COLUMN '(tableName, column)) = ColumnType column
+
+-- Must be able to constrain a condition to make sense given the columns
+-- available. This seems like it'll be general enough to reuse in, say, an
+-- sqlite driver.
+-- Must also be able to constrain certain conditions by type, like > to work
+-- only with the ordered types... well, no, I think every PostgreSQL type
+-- is ordered.
+class
+    (
+    ) => CompatibleRestriction universe (form :: [(Symbol, (Symbol, *))]) restriction
+
+instance
+    ( CompatibleRestriction PostgresUniverse form left
+    , CompatibleRestriction PostgresUniverse form right
+    ) => CompatibleRestriction PostgresUniverse form (AND left right)
+
+instance
+    ( CompatibleRestriction PostgresUniverse form left
+    , CompatibleRestriction PostgresUniverse form right
+    ) => CompatibleRestriction PostgresUniverse form (OR left right)
+
+instance
+    ( CompatibleRestriction PostgresUniverse form term
+    ) => CompatibleRestriction PostgresUniverse form (NOT term)
+
+instance
+    ( CompatibleRestriction PostgresUniverse form left
+    , CompatibleRestriction PostgresUniverse form right
+    ) => CompatibleRestriction PostgresUniverse form (EQUAL left right)
+
+instance
+    ( CompatibleRestriction PostgresUniverse form left
+    , CompatibleRestriction PostgresUniverse form right
+    ) => CompatibleRestriction PostgresUniverse form (LESSTHAN left right)
+
+instance
+    ( CompatibleRestriction PostgresUniverse form left
+    , CompatibleRestriction PostgresUniverse form right
+    ) => CompatibleRestriction PostgresUniverse form (GREATERTHAN left right)
+
+instance
+    ( Member '(tableName, column) form ~ True
+    ) => CompatibleRestriction PostgresUniverse form (COLUMN '(tableName, column))
+
+
 
 -- | Must pick up single-element inserts and updates and use Only, so as to obtain
 --   the ToRow and FromRow instances.
@@ -1501,531 +1559,6 @@ instance
                 (AliasColumnAliases aliasRight)
                 (ProjectTypes projectRight)
             )
-
-{-
-instance
-    ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    , PGQuery (SELECT project (FROM selectable))
-    , Selectable database selectable
-    , rowType ~ RowType (SelectableRowType project (SelectableForm database selectable))
-    , PGRow rowType
-    , FromRow (PGRowType rowType)
-
-    , PGRow (PGQueryParameterType (SELECT project (FROM selectable)))
-    , ToRow (PGRowType (PGQueryParameterType (SELECT project (FROM selectable))))
-
-    ) => RunPostgres database (SELECT project (FROM selectable))
-  where
-    type PostgresCodomain database (SELECT project (FROM selectable)) =
-        ReaderT Connection IO [RowType (SelectableRowType project (SelectableForm database selectable))]
-    runPostgres proxyDB term = do
-        let (queryString, parameters) = pgQuery term
-        connection <- ask
-        rows <- lift $ query connection (fromString queryString) (pgRowIn parameters)
-        return (fmap pgRowOut rows)
-
--- We know how to insert values into a table.
--- You can only insert one row at a time.
-instance
-    ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    , DatabaseHasTable database table
-    , PGQuery (INSERT (INTO (TABLE table)) (VALUES values))
-    , values ~ RowTypeColumns WRITE (TableSchema table) (SchemaColumns (TableSchema table))
-    , PGRow values
-    , ToRow (PGRowType values)
-    ) => RunPostgres database (INSERT (INTO (TABLE table)) (VALUES values))
-  where
-    type PostgresCodomain database (INSERT (INTO (TABLE table)) (VALUES values)) = ReaderT Connection IO ()
-    runPostgres proxyDB term = case term of
-        INSERT (INTO (TABLE proxyTable)) (VALUES values) -> do
-            let (queryString, parameters) = pgQuery term
-            connection <- ask
-            lift $ execute connection (fromString queryString) (pgRowIn parameters)
-            return ()
-
--- We know how to delete values from a table.
-instance
-    ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    , DatabaseHasTable database table
-    , KnownSymbol (TableName table)
-    ) => RunPostgres database (DELETE (FROM (TABLE table)))
-  where
-    type PostgresCodomain database (DELETE (FROM (TABLE table))) = ReaderT Connection IO ()
-    runPostgres proxyDB term = case term of
-        DELETE (FROM (TABLE proxyTable)) -> do
-            let (queryString, parameters) = pgQuery term
-            connection <- ask
-            lift $ execute connection (fromString queryString) parameters
-            return ()
-
--- We can delete with restriction.
-instance
-    ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    , DatabaseHasTable database table
-    , PGQuery (DELETE (FROM (TABLE table)))
-    , PGMakeRestriction condition
-    , ToRow (PGMakeRestrictionValue condition)
-    ) => RunPostgres database (WHERE (DELETE (FROM (TABLE table))) condition)
-  where
-    type PostgresCodomain database (WHERE (DELETE (FROM (TABLE table))) condition) = ReaderT Connection IO ()
-    runPostgres proxyDB term = case term of
-        WHERE delete condition -> do
-            let (queryString, queryParameters) = pgQuery delete
-            let (conditionString, restrictParameters) = pgRestriction condition
-            connection <- ask
-            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) (queryParameters :. restrictParameters)
-            return ()
-
--- We can update a table.
-instance
-    ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    , DatabaseHasTable database table
-    , PGQuery (UPDATE (TABLE table) sub row)
-    -- We guarantee that we're updating a subset of the schema columns ...
-    , Subset (SubColumns sub) (SchemaColumns (TableSchema table)) ~ 'True
-    -- ... and also that the values we give to fill them in are of the right
-    -- type.
-    , row ~ RowTypeColumns WRITE (TableSchema table) (SubColumns sub)
-    , PGRow row
-    , ToRow (PGRowType row)
-    ) => RunPostgres database (UPDATE (TABLE table) sub row)
-  where
-    type PostgresCodomain database (UPDATE (TABLE table) sub row) = ReaderT Connection IO ()
-    runPostgres proxyDB term = case term of
-        UPDATE (TABLE proxyTable) sub row -> do
-            let (queryString, parameters) = pgQuery term
-            connection <- ask
-            lift $ execute connection (fromString queryString) (pgRowIn parameters)
-            return ()
-
--- We can update with restriction.
-instance
-    ( WellFormedDatabase database
-    , SafeDatabase database PostgresUniverse
-    , DatabaseHasTable database table
-    , PGQuery (UPDATE (TABLE table) sub row)
-    , Subset (SubColumns sub) (SchemaColumns (TableSchema table)) ~ 'True
-    , row ~ RowTypeColumns WRITE (TableSchema table) (SubColumns sub)
-    , PGRow row
-    , ToRow (PGRowType row)
-    , PGMakeRestriction condition
-    , ToRow (PGMakeRestrictionValue condition)
-    ) => RunPostgres database (WHERE (UPDATE (TABLE table) sub row) condition)
-  where
-    type PostgresCodomain database (WHERE (UPDATE (TABLE table) sub row) condition) = ReaderT Connection IO ()
-    runPostgres proxyDB term = case term of
-        WHERE update@(UPDATE (TABLE proxyTable) sub row) condition -> do
-            let (queryString, queryParameters) = pgQuery update
-            let (conditionString, restrictParameters) = pgRestriction condition
-            connection <- ask
-            lift $ execute connection (fromString (concat [queryString, " WHERE ", conditionString])) ((pgRowIn queryParameters) :. restrictParameters)
-            return ()
--}
-
-
--- This class is useful for composing queries, for instance when we encounter
--- a WHERE clause and we just want to get the query string of the thing to
--- be restricted.
-{-
-class
-    (
-    ) => PGQuery term
-  where
-    type PGQueryParameterType term :: *
-    pgQuery :: term -> (String, PGQueryParameterType term)
-
-instance
-    ( KnownSymbol (TableName table)
-    , MakeValuesClause (SchemaColumns (TableSchema table))
-    , values ~ RowTypeColumns WRITE (TableSchema table) (SchemaColumns (TableSchema table))
-    ) => PGQuery (INSERT (INTO (TABLE table)) (VALUES values))
-  where
-    type PGQueryParameterType (INSERT (INTO (TABLE tabl)) (VALUES values)) = values
-    pgQuery term = case term of
-        INSERT (INTO (TABLE proxyTable)) (VALUES values) ->
-            let queryString = concat [
-                      "INSERT INTO "
-                    , symbolVal (Proxy :: Proxy (TableName table))
-                    , " VALUES "
-                    , makeValuesClause (Proxy :: Proxy (SchemaColumns (TableSchema table)))
-                    ]
-                parameters = values
-            in  (queryString, parameters)
-
-instance
-    ( KnownSymbol (TableName table)
-    ) => PGQuery (DELETE (FROM (TABLE table)))
-  where
-    type PGQueryParameterType (DELETE (FROM (TABLE table))) = ()
-    pgQuery term = case term of
-        DELETE (FROM (TABLE proxyTable)) ->
-            let queryString = concat [
-                      "DELETE FROM "
-                    , symbolVal (Proxy :: Proxy (TableName table))
-                    ]
-                parameters = ()
-            in  (queryString, parameters)
-
-instance
-    ( KnownSymbol (TableName table)
-    , PGMakeUpdateString sub
-    , values ~ RowTypeColumns WRITE (TableSchema table) (SubColumns sub)
-    ) => PGQuery (UPDATE (TABLE table) sub values)
-  where
-    type PGQueryParameterType (UPDATE (TABLE table) sub values) = values
-    pgQuery term = case term of
-        UPDATE (TABLE proxyTable) project values ->
-            let updateString = pgMakeUpdateString project
-                queryString = concat [
-                      "UPDATE "
-                    , symbolVal (Proxy :: Proxy (TableName table))
-                    , " SET "
-                    , updateString
-                    ]
-                parameters = values
-            in  (queryString, parameters)
-
-instance
-    ( KnownSymbol (TableName table)
-    , PGMakeProjectString project
-    , PGMakeAliasString alias
-    ) => PGQuery (SELECT project (FROM (AS (TABLE table) alias)))
-  where
-    type PGQueryParameterType (SELECT project (FROM (AS (TABLE table) alias))) = ()
-    pgQuery term = case term of
-        SELECT project (FROM (AS (TABLE proxyTable) alias)) ->
-            let queryString = concat [
-                      "SELECT "
-                    , pgMakeProjectString (Proxy :: Proxy project)
-                    , " FROM "
-                    , symbolVal (Proxy :: Proxy (TableName table))
-                    , " AS "
-                    , pgMakeAliasString (Proxy :: Proxy alias)
-                    ]
-                parameters = ()
-            in  (queryString, parameters)
-
-instance
-    ( MakeValuesClause (InverseRowType values)
-    , PGMakeProjectString project
-    , PGMakeAliasString alias
-    ) => PGQuery (SELECT project (FROM (AS (VALUES values) alias)))
-  where
-    type PGQueryParameterType (SELECT project (FROM (AS (VALUES values) alias))) = values
-    pgQuery term = case term of
-        SELECT project (FROM (AS (VALUES values) alias)) ->
-            let queryString = concat [
-                      "SELECT "
-                    , pgMakeProjectString (Proxy :: Proxy project)
-                    , " FROM "
-                    , makeValuesClause (Proxy :: Proxy (InverseRowType values))
-                    , " AS "
-                    , pgMakeAliasString (Proxy :: Proxy alias)
-                    ]
-                parameters = values
-            in  (queryString, parameters)
-
-instance
-    ( PGQuery left
-    , PGQuery right
-    , PGMakeProjectString project
-    , PGMakeAliasString alias
-    ) => PGQuery (SELECT project (FROM (AS (INTERSECT left right) alias)))
-  where
-    type PGQueryParameterType (SELECT project (FROM (AS (INTERSECT left right) alias))) =
-        (PGQueryParameterType left) :. (PGQueryParameterType right)
-    pgQuery term = case term of
-        SELECT project (FROM (AS (INTERSECT left right) alias)) ->
-            let (leftQueryString, leftParameters) = pgQuery left
-                (rightQueryString, rightParameters) = pgQuery right
-                queryString = concat [
-                      "SELECT "
-                    , pgMakeProjectString (Proxy :: Proxy project)
-                    , " FROM ("
-                    , leftQueryString
-                    , " INTERSECT "
-                    , rightQueryString
-                    , ") AS "
-                    , pgMakeAliasString (Proxy :: Proxy alias)
-                    ]
-                parameters = leftParameters :. rightParameters
-            in  (queryString, parameters)
-
-instance
-    ( PGQuery left
-    , PGQuery right
-    , PGMakeProjectString project
-    , PGMakeAliasString alias
-    ) => PGQuery (SELECT project (FROM (AS (UNION left right) alias)))
-  where
-    type PGQueryParameterType (SELECT project (FROM (AS (UNION left right) alias))) =
-        (PGQueryParameterType left) :. (PGQueryParameterType right)
-    pgQuery term = case term of
-        SELECT project (FROM (AS (UNION left right) alias)) ->
-            let (leftQueryString, leftParameters) = pgQuery left
-                (rightQueryString, rightParameters) = pgQuery right
-                queryString = concat [
-                      "SELECT "
-                    , pgMakeProjectString (Proxy :: Proxy project)
-                    , " FROM ("
-                    , leftQueryString
-                    , " UNION "
-                    , rightQueryString
-                    , ") AS "
-                    , pgMakeAliasString (Proxy :: Proxy alias)
-                    ]
-                parameters = leftParameters :. rightParameters
-            in  (queryString, parameters)
-
-instance
-    ( PGQuery left
-    , PGQuery right
-    , PGMakeProjectString project
-    , PGMakeRestriction condition
-    , PGMakeAliasString alias
-    ) => PGQuery (SELECT project (FROM (AS (ON (JOIN left right) condition) alias)))
-  where
-    type PGQueryParameterType (SELECT project (FROM (AS (ON (JOIN left right) condition) alias))) =
-        (PGQueryParameterType left) :. (PGQueryParameterType right) :. (PGMakeRestrictionValues condition)
-    pgQuery term = case term of
-        SELECT project (FROM (AS (UNION left right) alias)) ->
-            let (leftQueryString, leftParameters) = pgQuery left
-                (rightQueryString, rightParameters) = pgQuery right
-                queryString = concat [
-                      "SELECT "
-                    , pgMakeProjectString (Proxy :: Proxy project)
-                    -- Here's trouble. We need to have the left query string
-                    -- parenthesized except for its AS part.
-                    --
-                    -- AH even more trouble! You don't AS a join clause!
-                    -- Must remove that. OK, so we must factor the query
-                    -- string into parts: the principal part and then the
-                    -- alias.
-                    , " FROM ("
-                    , leftQueryString
-                    , " JOIN "
-                    , rightQueryString
-                    , ") AS "
-                    , pgMakeAliasString (Proxy :: Proxy alias)
-                    ]
-                parameters = leftParameters :. rightParameters
-            in  (queryString, parameters)
--}
-{-
-class
-    (
-    ) => PGMakeRestriction term
-  where
-    type PGMakeRestrictionValue term :: *
-    pgRestriction :: term -> (String, PGMakeRestrictionValue term)
-
-instance
-    ( PostgresUniverseConstraint ty
-    ) => PGMakeRestriction (VALUE ty)
-  where
-    type PGMakeRestrictionValue (VALUE ty) = Only ty
-    pgRestriction (VALUE x) = ("?", Only x)
-
-instance
-    ( PostgresUniverseConstraint ty
-    , KnownSymbol columnName
-    , KnownSymbol tableName
-    ) => PGMakeRestriction (COLUMN tableName '(columnName, ty))
-  where
-    type PGMakeRestrictionValue (COLUMN tableName '(columnName, ty)) = ()
-    pgRestriction _ = (queryString, value)
-      where
-        queryString = concat [
-              symbolVal (Proxy :: Proxy tableName)
-            , "."
-            , symbolVal (Proxy :: Proxy columnName)
-            ]
-        value = ()
-
-instance
-    ( PGMakeRestriction left
-    , PGMakeRestriction right
-    ) => PGMakeRestriction (AND left right)
-  where
-    type PGMakeRestrictionValue (AND left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
-    pgRestriction (AND left right) = (queryString, value)
-      where
-        (queryStringLeft, valueLeft) = pgRestriction left
-        (queryStringRight, valueRight) = pgRestriction right
-        queryString = concat [
-              "("
-            , queryStringLeft
-            , ") AND ("
-            , queryStringRight
-            , ")"
-            ]
-        value = valueLeft :. valueRight
-
-instance
-    ( PGMakeRestriction left
-    , PGMakeRestriction right
-    ) => PGMakeRestriction (OR left right)
-  where
-    type PGMakeRestrictionValue (OR left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
-    pgRestriction (OR left right) = (queryString, value)
-      where
-        (queryStringLeft, valueLeft) = pgRestriction left
-        (queryStringRight, valueRight) = pgRestriction right
-        queryString = concat [
-              "("
-            , queryStringLeft
-            , ") OR ("
-            , queryStringRight
-            , ")"
-            ]
-        value = valueLeft :. valueRight
-
-instance
-    ( PGMakeRestriction term
-    ) => PGMakeRestriction (NOT term)
-  where
-    type PGMakeRestrictionValue (NOT term) = PGMakeRestrictionValue term
-    pgRestriction (NOT term) = (queryString, value)
-      where
-        (subQueryString, subValue) = pgRestriction term
-        queryString = concat [
-              "NOT ("
-            , subQueryString
-            , ")"
-            ]
-        value = subValue
-
-instance
-    ( PGMakeRestriction left
-    , PGMakeRestriction right
-    , PGTerminalRestriction left
-    , PGTerminalRestriction right
-    , PGTerminalRestrictionType left ~ PGTerminalRestrictionType right
-    ) => PGMakeRestriction (EQUAL left right)
-  where
-    type PGMakeRestrictionValue (EQUAL left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
-    pgRestriction (EQUAL left right) = (queryString, value)
-      where
-        (queryStringLeft, valueLeft) = pgRestriction left
-        (queryStringRight, valueRight) = pgRestriction right
-        queryString = concat [
-              "("
-            , queryStringLeft
-            , ") = ("
-            , queryStringRight
-            , ")"
-            ]
-        value = valueLeft :. valueRight
-
-instance
-    ( PGMakeRestriction left
-    , PGMakeRestriction right
-    , PGTerminalRestriction left
-    , PGTerminalRestriction right
-    , PGTerminalRestrictionType left ~ PGTerminalRestrictionType right
-    ) => PGMakeRestriction (LESSTHAN left right)
-  where
-    type PGMakeRestrictionValue (LESSTHAN left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
-    pgRestriction (LESSTHAN left right) = (queryString, value)
-      where
-        (queryStringLeft, valueLeft) = pgRestriction left
-        (queryStringRight, valueRight) = pgRestriction right
-        queryString = concat [
-              "("
-            , queryStringLeft
-            , ") < ("
-            , queryStringRight
-            , ")"
-            ]
-        value = valueLeft :. valueRight
-
-instance
-    ( PGMakeRestriction left
-    , PGMakeRestriction right
-    , PGTerminalRestriction left
-    , PGTerminalRestriction right
-    , PGTerminalRestrictionType left ~ PGTerminalRestrictionType right
-    ) => PGMakeRestriction (GREATERTHAN left right)
-  where
-    type PGMakeRestrictionValue (GREATERTHAN left right) = (PGMakeRestrictionValue left) :. (PGMakeRestrictionValue right)
-    pgRestriction (GREATERTHAN left right) = (queryString, value)
-      where
-        (queryStringLeft, valueLeft) = pgRestriction left
-        (queryStringRight, valueRight) = pgRestriction right
-        queryString = concat [
-              "("
-            , queryStringLeft
-            , ") > ("
-            , queryStringRight
-            , ")"
-            ]
-        value = valueLeft :. valueRight
-
--- | This class identifies those terms which can serve as terminal elements of
---   a restriction clause, i.e. not logical connectives like AND and OR.
---   It comes with an associated type: the type of thing at this terminus,
---   which is useful in order to guarantee well-typedness of restriction
---   clauses.
-class PGTerminalRestriction term where
-    type PGTerminalRestrictionType term :: *
-
-instance PGTerminalRestriction (VALUE ty) where
-    type PGTerminalRestrictionType (VALUE ty) = ty
-
-instance PGTerminalRestriction (COLUMN tableName column) where
-    type PGTerminalRestrictionType (COLUMN tableName column) = ColumnType column
--}
-
-
-
--- Must be able to constrain a condition to make sense given the columns
--- available. This seems like it'll be general enough to reuse in, say, an
--- sqlite driver.
--- Must also be able to constrain certain conditions by type, like > to work
--- only with the ordered types... well, no, I think every PostgreSQL type
--- is ordered.
-
-class
-    (
-    ) => PGCompatibleRestriction database (form :: [(Symbol, (Symbol, *))]) restriction
-
-instance
-    ( PGCompatibleRestriction database form left
-    , PGCompatibleRestriction database form right
-    ) => PGCompatibleRestriction database form (AND left right)
-
-instance
-    ( PGCompatibleRestriction database form left
-    , PGCompatibleRestriction database form right
-    ) => PGCompatibleRestriction database form (OR left right)
-
-instance
-    ( PGCompatibleRestriction database form term
-    ) => PGCompatibleRestriction database form (NOT term)
-
-instance
-    ( PGCompatibleRestriction database form left
-    , PGCompatibleRestriction database form right
-    ) => PGCompatibleRestriction database form (EQUAL left right)
-
-instance
-    ( PGCompatibleRestriction database form left
-    , PGCompatibleRestriction database form right
-    ) => PGCompatibleRestriction database form (LESSTHAN left right)
-
-instance
-    ( PGCompatibleRestriction database form left
-    , PGCompatibleRestriction database form right
-    ) => PGCompatibleRestriction database form (GREATERTHAN left right)
-
-instance
-    ( Member '(tableName, column) form ~ True
-    ) => PGCompatibleRestriction database form (COLUMN '(tableName, column))
 
 
 
