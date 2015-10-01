@@ -29,6 +29,7 @@ import GHC.TypeLits
 import Control.Monad (forM_)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
+import Control.Monad.Trans.Identity
 import Data.Constraint
 import Data.Functor.Identity
 import Data.Proxy
@@ -40,6 +41,7 @@ import Types.Unique
 import Types.Equal
 import Types.Append
 import Types.Member
+import Types.Parametric
 import Database.Relational.Safe
 import Database.Relational.Universe
 import Database.Relational.Database
@@ -174,58 +176,66 @@ class
     (
     ) => CreateDatabase database universe tables
   where
-    type CreateDatabaseType database universe tables :: *
-    createDatabase :: DATABASE database -> universe -> Proxy tables -> CreateDatabaseType database universe tables
+    type CreateDatabaseParameters database universe tables :: [*]
+    type CreateDatabaseType database universe tables :: * -> *
+    createDatabase
+        :: DATABASE database
+        -> universe
+        -> Proxy tables
+        -> CreateDatabaseType database universe tables ()
 
 instance
     (
     ) => CreateDatabase database PostgresUniverse '[]
   where
-    type CreateDatabaseType database PostgresUniverse '[] = ReaderT Connection IO ()
-    createDatabase _ _ _ = return ()
+    type CreateDatabaseParameters database PostgresUniverse '[] = '[]
+    type CreateDatabaseType database PostgresUniverse '[] =
+        Parametric '[] (ReaderT Connection IO)
+    createDatabase _ _ _ = Base (return ())
 
 instance
     ( CreateTable database PostgresUniverse table
-    ,   CreateTableType database PostgresUniverse table
-      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
+    , CreateTableType database PostgresUniverse table ~ ReaderT Connection IO ()
 
     , AddColumns database PostgresUniverse table (SchemaColumns (TableSchema table))
-    ,   AddColumnsType database PostgresUniverse table (SchemaColumns (TableSchema table))
-      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
+    , AddColumnsType database PostgresUniverse table (SchemaColumns (TableSchema table)) ~ ReaderT Connection IO ()
 
     , AddPrimaryKey database PostgresUniverse table (SchemaPrimaryKey (TableSchema table))
-    ,   AddPrimaryKeyType database PostgresUniverse table (SchemaPrimaryKey (TableSchema table))
-      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
+    , AddPrimaryKeyType database PostgresUniverse table (SchemaPrimaryKey (TableSchema table)) ~ ReaderT Connection IO ()
 
     , AddUniques database PostgresUniverse table (SchemaUnique (TableSchema table))
-    ,   AddUniquesType database PostgresUniverse table (SchemaUnique (TableSchema table))
-      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
+    , AddUniquesType database PostgresUniverse table (SchemaUnique (TableSchema table)) ~ ReaderT Connection IO ()
 
     , AddNotNulls database PostgresUniverse table (SchemaNotNull (TableSchema table))
-    ,   AddNotNullsType database PostgresUniverse table (SchemaNotNull (TableSchema table))
-      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
+    , AddNotNullsType database PostgresUniverse table (SchemaNotNull (TableSchema table)) ~ ReaderT Connection IO ()
 
-    , CreateDatabase database PostgresUniverse tables
-    ,   CreateDatabaseType database PostgresUniverse tables
-      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
+    , AddDefaults database PostgresUniverse table (SchemaDefault (TableSchema table))
+    ,   AddDefaultsType database PostgresUniverse table (SchemaDefault (TableSchema table))
+      ~ Parametric (AddDefaultsParameters database PostgresUniverse table (SchemaDefault (TableSchema table))) (ReaderT Connection IO)
+    , RunParametricBundle (AddDefaultsParameters database PostgresUniverse table (SchemaDefault (TableSchema table))) (ReaderT Connection IO) ()
 
     , AddForeignKeys database PostgresUniverse table (SchemaForeignKeys (TableSchema table))
-    ,   AddForeignKeysType database PostgresUniverse table (SchemaForeignKeys (TableSchema table))
-      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
+    , AddForeignKeysType database PostgresUniverse table (SchemaForeignKeys (TableSchema table)) ~ ReaderT Connection IO ()
+
+    , CreateDatabase database PostgresUniverse tables
+    , CreateDatabaseType database PostgresUniverse tables ~ Parametric (CreateDatabaseParameters database PostgresUniverse tables) (ReaderT Connection IO)
 
     ) => CreateDatabase database PostgresUniverse (table ': tables)
   where
-    type CreateDatabaseType database PostgresUniverse (table ': tables) = ReaderT Connection IO ()
-    createDatabase database PostgresUniverse _ = do
-        createTable database PostgresUniverse (TABLE :: TABLE table)
-        addColumns database PostgresUniverse (TABLE :: TABLE table) (COLUMNS :: COLUMNS (SchemaColumns (TableSchema table)))
-        addPrimaryKey database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaPrimaryKey (TableSchema table)))
-        addUniques database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaUnique (TableSchema table)))
-        addNotNulls database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaNotNull (TableSchema table)))
-        createDatabase database PostgresUniverse (Proxy :: Proxy tables)
-        -- Add foreign keys now that all tables are present.
-        addForeignKeys database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaForeignKeys (TableSchema table)))
-        return ()
+    type CreateDatabaseParameters database PostgresUniverse (table ': tables) =
+        (BundleParameters (AddDefaultsParameters database PostgresUniverse table (SchemaDefault (TableSchema table))) ': CreateDatabaseParameters database PostgresUniverse tables)
+    type CreateDatabaseType database PostgresUniverse (table ': tables) =
+        Parametric (BundleParameters (AddDefaultsParameters database PostgresUniverse table (SchemaDefault (TableSchema table))) ': CreateDatabaseParameters database PostgresUniverse tables) (ReaderT Connection IO)
+    createDatabase database universe _ =
+           Base (createTable database PostgresUniverse (TABLE :: TABLE table))
+        *> Base (addColumns database universe (TABLE :: TABLE table) (COLUMNS :: COLUMNS (SchemaColumns (TableSchema table))))
+        *> Base (addPrimaryKey database universe (TABLE :: TABLE table) (Proxy :: Proxy (SchemaPrimaryKey (TableSchema table))))
+        *> Base (addUniques database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaUnique (TableSchema table))))
+        *> Base (addNotNulls database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaNotNull (TableSchema table))))
+        *> Lift (\p -> Base (runParametricBundle (Proxy :: Proxy (AddDefaultsParameters database PostgresUniverse table (SchemaDefault (TableSchema table)))) (addDefaults database universe (TABLE :: TABLE table) (Proxy :: Proxy (SchemaDefault (TableSchema table)))) p))
+        *> Lift (\_ -> createDatabase database universe (Proxy :: Proxy tables))
+        *> Base (addForeignKeys database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaForeignKeys (TableSchema table))))
+        *> pure ()
 
 class
     (
@@ -398,6 +408,109 @@ instance
     addNotNulls database PostgresUniverse table _ = do
         runRelational database PostgresUniverse (addNotNull_ table (COLUMN :: COLUMN column))
         addNotNulls database PostgresUniverse table (Proxy :: Proxy notNulls)
+
+class
+    (
+    ) => AddDefaults database universe table defaults
+  where
+    type AddDefaultsParameters database universe table defaults :: [*]
+    type AddDefaultsType database universe table defaults :: * -> *
+    addDefaults
+        :: DATABASE database
+        -> universe
+        -> TABLE table
+        -> Proxy defaults
+        -> AddDefaultsType database universe table defaults ()
+
+instance
+    (
+    ) => AddDefaults database PostgresUniverse table '[]
+  where
+    type AddDefaultsParameters database PostgresUniverse table '[] = '[]
+    type AddDefaultsType database PostgresUniverse table '[] =
+        Parametric (ColumnTypes '[]) (ReaderT Connection IO)
+    addDefaults _ _ _ _ = Base (return ())
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (SET (DEFAULT (COLUMN def)) (ColumnType def)))
+    , AddDefaults database PostgresUniverse table defs
+    ,   AddDefaultsType database PostgresUniverse table defs
+      ~ Parametric (ColumnTypes defs) (ReaderT Connection IO)
+    ) => AddDefaults database PostgresUniverse table (def ': defs)
+  where
+    type AddDefaultsParameters database PostgresUniverse table (def ': defs) =
+        (ColumnType def ': ColumnTypes defs)
+    type AddDefaultsType database PostgresUniverse table (def ': defs) =
+        Parametric (ColumnType def ': ColumnTypes defs) (ReaderT Connection IO)
+    addDefaults database universe table _ =
+           Lift (\val -> (Base (runRelational database PostgresUniverse (addDefault_ table (COLUMN :: COLUMN def) val))))
+        *> Lift (\_ -> addDefaults database universe table (Proxy :: Proxy defs))
+
+{-
+-- For adding defaults, we manually write out classes for up to 10 defaults.
+-- I tried, but couldn't make this work nicely in a recursive way. The
+-- method was essentially to stack ReaderT (ColumnType def) for the
+-- AddDefaultsType.
+--
+-- Note: ok, if we do it this way, then we'll have to do the same for
+-- CreateDatabase, no?!?!?! Yeah, whatever method we use there will apply
+-- here.
+class
+    (
+    ) => AddDefaults database universe table defaults
+  where
+    type AddDefaultsType database universe table defaults :: *
+    addDefaults
+        :: DATABASE database
+        -> universe
+        -> TABLE table
+        -> Proxy defaults
+        -> AddDefaultsType database universe table defaults
+
+instance
+    (
+    ) => AddDefaults database PostgresUniverse table '[]
+  where
+    type AddDefaultsType database PostgresUniverse table '[] = ReaderT Connection IO ()
+    addDefaults _ _ _ _ = return ()
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (SET (DEFAULT (COLUMN def)) (ColumnType def)))
+    ) => AddDefaults database PostgresUniverse table '[def]
+  where
+    type AddDefaultsType database PostgresUniverse table '[def] =
+        ColumnType def -> AddDefaultsType database PostgresUniverse table '[]
+    addDefaults database PostgresUniverse table _ = \val ->
+           (runRelational database PostgresUniverse (addDefault_ table (COLUMN :: COLUMN def) val))
+        *> pure ()
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (SET (DEFAULT (COLUMN def1)) (ColumnType def1)))
+    , RunRelational database PostgresUniverse (ALTER (TABLE table) (SET (DEFAULT (COLUMN def2)) (ColumnType def2)))
+    ) => AddDefaults database PostgresUniverse table '[def1, def2]
+  where
+    type AddDefaultsType database PostgresUniverse table '[def1, def2] =
+        (ColumnType def1, ColumnType def2) -> AddDefaultsType database PostgresUniverse table '[]
+    addDefaults database PostgresUniverse table _ = \(val1, val2) ->
+           (runRelational database PostgresUniverse (addDefault_ table (COLUMN :: COLUMN def1) val1))
+        *> (runRelational database PostgresUniverse (addDefault_ table (COLUMN :: COLUMN def2) val2))
+        *> pure ()
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (SET (DEFAULT (COLUMN def1)) (ColumnType def1)))
+    , RunRelational database PostgresUniverse (ALTER (TABLE table) (SET (DEFAULT (COLUMN def2)) (ColumnType def2)))
+    , RunRelational database PostgresUniverse (ALTER (TABLE table) (SET (DEFAULT (COLUMN def3)) (ColumnType def3)))
+    ) => AddDefaults database PostgresUniverse table '[def1, def2, def3]
+  where
+    type AddDefaultsType database PostgresUniverse table '[def1, def2, def3] =
+        (ColumnType def1, ColumnType def2, ColumnType def3) -> AddDefaultsType database PostgresUniverse table '[]
+    addDefaults database PostgresUniverse table _ = \(val1, val2, val3) ->
+           (runRelational database PostgresUniverse (addDefault_ table (COLUMN :: COLUMN def1) val1))
+        *> (runRelational database PostgresUniverse (addDefault_ table (COLUMN :: COLUMN def2) val2))
+        *> (runRelational database PostgresUniverse (addDefault_ table (COLUMN :: COLUMN def3) val3))
+        *> pure ()
+-}
+
 
 createTable_ :: TABLE table -> CREATE (TABLE table)
 createTable_ table = CREATE table
@@ -1255,9 +1368,9 @@ instance
     (
     ) => MakeQueryParameters PostgresUniverse (SET (DEFAULT (COLUMN column)) ty)
   where
-    type QueryParametersType PostgresUniverse (SET (DEFAULT (COLUMN column)) ty) = ty
+    type QueryParametersType PostgresUniverse (SET (DEFAULT (COLUMN column)) ty) = Identity ty
     makeQueryParameters _ term = case term of
-        SET (DEFAULT _) x -> x
+        SET (DEFAULT _) x -> Identity x
 
 instance
     (

@@ -14,6 +14,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Database.Relational.Column (
 
@@ -22,6 +23,7 @@ module Database.Relational.Column (
     , COLUMNS(..)
     , ColumnName
     , ColumnType
+    , ColumnTypes
     , FIELD(..)
     , FIELDS(..)
 
@@ -45,6 +47,10 @@ type family ColumnName (column :: (Symbol, *)) :: Symbol where
 
 type family ColumnType (column :: (Symbol, *)) :: * where
     ColumnType '(name, t) = t
+
+type family ColumnTypes (columns :: [(Symbol, *)]) :: [*] where
+    ColumnTypes '[] = '[]
+    ColumnTypes (c ': cs) = ColumnType c ': ColumnTypes cs
 
 -- | A column qualified by a table name.
 data FIELD (field :: (Symbol, (Symbol, *))) where

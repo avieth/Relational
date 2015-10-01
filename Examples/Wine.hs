@@ -6,6 +6,11 @@ Licence     : BSD3
 Maintainer  : aovieth@gmail.com
 Stability   : experimental
 Portability : non-portable (GHC only)
+
+Here we define a program which offers an HTTP interface to a PostgreSQL
+database containing data about wines and tasting notes. It demonstrates
+the use of the Relational and Servant libraries.
+
 -}
 
 {-# LANGUAGE AutoDeriveTypeable #-}
@@ -64,6 +69,14 @@ import Servant.API
 import Network.Wai
 import Network.Wai.Handler.Warp hiding (Connection)
 import Options.Applicative
+import Types.Parametric
+
+-- |
+-- = Definition of the database
+--
+-- Working with Relational is all about giving a type-level representation of
+-- a database: its tables and their schemas. We begin by declaraing types
+-- for every column which we shall use.
 
 type UUIDColumn = Column "uuid" PGUUID
 type WineUUIDColumn = Column "wine_uuid" PGUUID
@@ -75,7 +88,11 @@ type NotesColumn = Column "notes" PGText
 type StockColumn = Column "stock" PGInteger
 type DescriptionColumn = Column "description" PGText
 
--- | A table containing information about all wines 
+-- As you can see, to define a column is to give a name and a type.
+-- Tables are defined in a similar way: instead of giving a name and a type,
+-- we give a name and a *schema*. The schema is composed of columns and
+-- constraints, which are here suggestively named.
+
 type WinesTable = Table "wines" WinesSchema
 type WinesSchema =
     Schema
@@ -94,6 +111,14 @@ type WinesColumns = '[
     , DescriptionColumn
     , StockColumn
     ]
+
+-- To define a primary key we state the columns which compose the key. In
+-- this case it's just the UUIDColumn.
+-- For this table, we have no foreign keys, unique, or check columns, but
+-- we'll see an example of a foreign key in the notes table.
+-- Primary key, foreign key, unique, and check constraints must be named,
+-- but not-null and default constraints are not named.
+
 type WinesPrimaryKey = '( "pk_wines", '[ UUIDColumn ] )
 type WinesForeignKeys = '[]
 type WinesUnique = '[]
@@ -103,7 +128,9 @@ type WinesNotNull = '[
     , StockColumn 
     ]
 type WinesCheck = '[]
-type WinesDefault = '[ StockColumn ]
+type WinesDefault = '[
+      StockColumn
+    ]
 
 type NotesTable = Table "notes" NotesSchema
 type NotesSchema =
@@ -122,6 +149,14 @@ type NotesColumns = '[
     , NotesColumn
     ]
 type NotesPrimaryKey = '( "pk_notes", '[ UUIDColumn ] )
+
+-- A table can have multiple foreign keys. Each one has a name, indicates
+-- the local columns which compose it, the name of the table which they
+-- reference, and the columns from that table which complete the reference.
+-- You are able to give nonsense here, like lists of mismatched length for
+-- local and foreign columns, but these anomalies will be caught by GHC if
+-- you try to use such a foreign key to affect any change.
+
 type NotesForeignKeyUUID =
       '( "fk_notes_wines"
       , '[ WineUUIDColumn ]
@@ -138,6 +173,10 @@ type NotesNotNull = '[
     ]
 type NotesCheck = '[]
 type NotesDefault = '[]
+
+-- A database is a named list of tables.
+-- It will be important to have value-level counterparts for many of the
+-- types just given, so we write those here.
 
 type WineDatabase = Database "wine" '[
       WinesTable
@@ -176,6 +215,18 @@ dateColumn = COLUMN
 
 notesColumn :: COLUMN NotesColumn
 notesColumn = COLUMN
+
+-- |
+-- = Writing queries
+--
+-- The philosophy of Relational is to embrace SQL rather than abstract it, so
+-- it's no surprise that queries written here in Haskell look like the SQL
+-- you might feed into your RDBMS.
+--
+-- |
+-- == Insertion
+--
+-- Here are two examples of insertions. The type
 
 insertWine
     :: UUID
@@ -531,7 +582,9 @@ main = do
     opts <- execParser (info applicationOptionsParser mempty)
     pool <- createPool (connectToDatabase opts) closeConnection 2 2 2
     when (setupDatabase opts) $ withResource pool $ \connection -> do
-        runReaderT createWineDatabase connection
+        -- Here we specify the defaults: 0 for stock column in wines
+        -- table, and no defaults necessary for the notes table.
+        runReaderT (runParametric Proxy createWineDatabase (PGInteger 0) ()) connection
         return ()
     let application = serve (Proxy :: Proxy WineAPI) (server pool)
     run (httpPort opts) application
