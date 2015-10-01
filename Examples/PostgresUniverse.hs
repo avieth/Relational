@@ -25,7 +25,7 @@ Portability : non-portable (GHC only)
 
 module Examples.PostgresUniverse where
 
-import GHC.TypeLits (Symbol, KnownSymbol, symbolVal, SomeSymbol(..), someSymbolVal, Nat, KnownNat, natVal)
+import GHC.TypeLits
 import Control.Monad (forM_)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
@@ -110,25 +110,31 @@ class
   where
     postgresUniverseTypeId :: Proxy t -> String
 
-newtype PGBool = PGBool Bool
-  deriving (Show, FromField, ToField)
+newtype PGBool = PGBool {
+      pgBool :: Bool
+    } deriving (Show, FromField, ToField)
 
 -- PostgreSQL 4-byte integer. We can safely use an Int.
-newtype PGInteger = PGInteger Int
-  deriving (Show, FromField, ToField)
+newtype PGInteger = PGInteger {
+      pgInteger :: Int
+    } deriving (Show, FromField, ToField)
 
 -- PostgreSQL 8-byte integer. That's GHC's Int... maybe platform dependent!
-newtype PGBigInteger = PGBigInteger Int
-  deriving (Show, FromField, ToField)
+newtype PGBigInteger = PGBigInteger {
+      pgBigInteger :: Int
+    } deriving (Show, FromField, ToField)
 
-newtype PGText = PGText T.Text
-  deriving (Show, FromField, ToField)
+newtype PGText = PGText {
+      pgText :: T.Text
+    } deriving (Show, FromField, ToField)
 
-newtype PGUUID = PGUUID UUID
-  deriving (Show, FromField, ToField)
+newtype PGUUID = PGUUID {
+      pgUUID :: UUID
+    } deriving (Show, FromField, ToField)
 
-newtype PGZonedTimestamp = PGZonedTimestamp ZonedTime
-  deriving (Show, FromField, ToField)
+newtype PGZonedTimestamp = PGZonedTimestamp {
+      pgZonedTimestamp :: ZonedTime
+    } deriving (Show, FromField, ToField)
 
 instance PostgresUniverseConstraint PGBool where
     postgresUniverseTypeId _ = "bool"
@@ -978,29 +984,29 @@ instance
     ( Monoid m
     , IsString m
     , MakeQuery universe term m
-    , KnownNat nat
-    ) => MakeQuery universe (LIMIT term nat) m
+    ) => MakeQuery universe (LIMIT term) m
   where
     makeQuery proxy term = case term of
-        LIMIT limited proxyNat -> mconcat [
-              makeQuery proxy limited
-            , fromString " LIMIT "
-            , fromString (show (natVal proxyNat))
-            ]
+        LIMIT limited someNat -> case someNat of
+            SomeNat proxyNat -> mconcat [
+                  makeQuery proxy limited
+                , fromString " LIMIT "
+                , fromString (show (natVal proxyNat))
+                ]
 
 instance
     ( Monoid m
     , IsString m
     , MakeQuery universe term m
-    , KnownNat nat
-    ) => MakeQuery universe (OFFSET term nat) m
+    ) => MakeQuery universe (OFFSET term) m
   where
     makeQuery proxy term = case term of
-        OFFSET offset proxyNat -> mconcat [
-              makeQuery proxy offset
-            , fromString " OFFSET "
-            , fromString (show (natVal proxyNat))
-            ]
+        OFFSET offset someNat -> case someNat of
+            SomeNat proxyNat -> mconcat [
+                  makeQuery proxy offset
+                , fromString " OFFSET "
+                , fromString (show (natVal proxyNat))
+                ]
 
 instance
     ( Monoid m
@@ -1345,18 +1351,18 @@ instance
 
 instance
     ( MakeQueryParameters PostgresUniverse term
-    ) => MakeQueryParameters PostgresUniverse (LIMIT term nat)
+    ) => MakeQueryParameters PostgresUniverse (LIMIT term)
   where
-    type QueryParametersType PostgresUniverse (LIMIT term nat)
+    type QueryParametersType PostgresUniverse (LIMIT term)
         = QueryParametersType PostgresUniverse term
     makeQueryParameters proxy term = case term of
         LIMIT subterm _ -> makeQueryParameters proxy subterm
 
 instance
     ( MakeQueryParameters PostgresUniverse term
-    ) => MakeQueryParameters PostgresUniverse (OFFSET term nat)
+    ) => MakeQueryParameters PostgresUniverse (OFFSET term)
   where
-    type QueryParametersType PostgresUniverse (OFFSET term nat)
+    type QueryParametersType PostgresUniverse (OFFSET term)
         = QueryParametersType PostgresUniverse term
     makeQueryParameters proxy term = case term of
         OFFSET subterm _ -> makeQueryParameters proxy subterm
@@ -1531,16 +1537,16 @@ instance
 
 instance
     ( QueryOutput PostgresUniverse term
-    ) => QueryOutput PostgresUniverse (LIMIT term nat)
+    ) => QueryOutput PostgresUniverse (LIMIT term)
   where
-    type QueryOutputType PostgresUniverse (LIMIT term nat) =
+    type QueryOutputType PostgresUniverse (LIMIT term) =
         QueryOutputType PostgresUniverse term
 
 instance
     ( QueryOutput PostgresUniverse term
-    ) => QueryOutput PostgresUniverse (OFFSET term nat)
+    ) => QueryOutput PostgresUniverse (OFFSET term)
   where
-    type QueryOutputType PostgresUniverse (OFFSET term nat) =
+    type QueryOutputType PostgresUniverse (OFFSET term) =
         QueryOutputType PostgresUniverse term
 
 instance

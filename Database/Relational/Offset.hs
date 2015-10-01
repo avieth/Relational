@@ -19,8 +19,8 @@ module Database.Relational.Offset (
 
     ) where
 
-import GHC.TypeLits (Nat)
+import GHC.TypeLits (SomeNat)
 import Data.Proxy
 
-data OFFSET relation (nat :: Nat) where
-    OFFSET :: relation -> Proxy nat -> OFFSET relation nat
+data OFFSET relation where
+    OFFSET :: relation -> SomeNat -> OFFSET relation

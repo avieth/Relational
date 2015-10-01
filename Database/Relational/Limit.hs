@@ -19,8 +19,8 @@ module Database.Relational.Limit (
 
     ) where
 
-import GHC.TypeLits (Nat)
+import GHC.TypeLits (SomeNat)
 import Data.Proxy
 
-data LIMIT relation (nat :: Nat) where
-    LIMIT :: relation -> Proxy nat -> LIMIT relation nat
+data LIMIT relation where
+    LIMIT :: relation -> SomeNat -> LIMIT relation
