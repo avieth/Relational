@@ -61,6 +61,7 @@ import Database.Relational.Constraint
 import Database.Relational.Name
 import Database.Relational.PrimaryKey
 import Database.Relational.ForeignKey
+import Database.Relational.As
 import Examples.PostgresUniverse
 import Database.PostgreSQL.Simple
 import Data.Pool
@@ -224,9 +225,26 @@ notesColumn = COLUMN
 -- you might feed into your RDBMS.
 --
 -- |
--- == Insertion
+-- == Insert
 --
--- Here are two examples of insertions. The type
+-- Here are two examples of insertions. We leave a wildcard for the rightmost
+-- type because it's rather long:
+--
+--   INSERT
+--     (INTO (TABLE WinesTable))
+--     (VALUES
+--       ( PGUUID
+--       , PGTEST
+--       , PGTEST
+--       , Maybe PGInteger
+--       , Maybe PGText
+--       , Default PGInteger
+--       )
+--     )
+--
+-- That shouldn't be too surprising: it looks exactly like the term we write.
+-- The story is similar for the other queries which we write. The rightmost
+-- type can be given, but it's so long that we'd rather not write it out.
 
 insertWine
     :: UUID
@@ -259,6 +277,17 @@ insertNotes uuid wineUuid date notes =
             )
     )
 
+-- |
+-- == Update
+--
+-- The syntax for update deviates from the SQL a little moreso than for insert.
+-- There is no SET, and the subset of columns is given at once, before the
+-- values to use. Here we also demonstrate the use of a WHERE clause.
+-- FIELD allows us to prefix a column type with a string, which is sometimes
+-- needed in order to disambiguate. Here we choose "wines" and "notes" because
+-- these are the names of the tables which we update, and we have not used AS
+-- to alias them.
+
 -- TODO accomodate incrementing, as in
 --     UPDATE stock SET stock = stock + 1 where stock.uuid = uuid
 updateWine :: UUID -> T.Text -> T.Text -> Maybe Int -> Maybe T.Text -> Int -> _
@@ -279,6 +308,33 @@ updateNotes uuid date notes =
     `WHERE`
     ((FIELD :: FIELD '("notes", UUIDColumn)) .==. VALUE (PGUUID uuid))
 
+-- |
+-- == Delete
+--
+-- Even simpler than update and insert.
+
+deleteWine :: UUID -> _
+deleteWine uuid =
+    DELETE
+    (FROM winesTable)
+    `WHERE`
+    ((FIELD :: FIELD '("wines", UUIDColumn)) .==. VALUE (PGUUID uuid))
+
+deleteNotes :: UUID -> _
+deleteNotes uuid =
+    DELETE
+    (FROM notesTable)
+    `WHERE`
+    ((FIELD :: FIELD '("notes", UUIDColumn)) .==. VALUE (PGUUID uuid))
+
+-- |
+-- == Select
+--
+-- What follows are some simple selections from disk tables, with restrictions,
+-- limits, and offsets. Notice that we use FIELDs in the projection which
+-- immediately follows a SELECT term. For the sake of demonstration, in the
+-- first example @selectWineList@ we alias the table and account for this in
+-- the projection.
 
 selectWineList
     :: SomeNat
@@ -286,10 +342,10 @@ selectWineList
     -> _
 selectWineList limit offset =
     (SELECT
-    (      (FIELD :: FIELD '("wines", UUIDColumn))
+    (      (FIELD :: FIELD '("aliasedTable", '("aliasedColumn", PGUUID)))
         |: P
     )
-    (FROM winesTable))
+    (FROM (winesTable `AS` (Proxy :: Proxy '("aliasedTable", '["aliasedColumn"])))))
     `LIMIT`
     limit
     `OFFSET`
@@ -339,45 +395,24 @@ selectNotes uuid =
     `WHERE`
     ((FIELD :: FIELD '("notes", UUIDColumn)) .==. VALUE (PGUUID uuid))
 
-deleteWine :: UUID -> _
-deleteWine uuid =
-    DELETE
-    (FROM winesTable)
-    `WHERE`
-    ((FIELD :: FIELD '("wines", UUIDColumn)) .==. VALUE (PGUUID uuid))
-
-deleteNotes :: UUID -> _
-deleteNotes uuid =
-    DELETE
-    (FROM notesTable)
-    `WHERE`
-    ((FIELD :: FIELD '("notes", UUIDColumn)) .==. VALUE (PGUUID uuid))
-
--- What do we want to do?
--- ✓ GET wine list, paginated.
--- ✓ GET wine metadata by uuid (includes stock).
--- ✓ GET notes for some wine (by wine uuid).
--- ✓ GET notes by uuid.
--- ✓ POST new wine (creates stock record, too).
--- ✓ PUT wine stock by uuid.
--- ✓ POST new tasting notes.
--- ✓ PUT tasting notes.
--- ✓ DELETE notes or wine.
+-- |
+-- = Database creation
 --
--- TODO Wednesday:
--- - Look at database creation again; should be able to junk those
---   Value/ source files, as they are quite awkward.
--- - Throw a Servant API in front of this.
--- - Executable has an option: --create-db. It creates the database.
---   If not given, runs a warp server for the wine database API.
---
---
+-- Relational types are rich enough that we can determine from them how to
+-- create a database. The PostgreSQL example handles this, with much typeclass
+-- nonsense (it's very confusing).
 
 createWineDatabase =
     createDatabase
         wineDatabase
         PostgresUniverse
         (Proxy :: Proxy (DatabaseTables WineDatabase))
+
+-- |
+-- = HTTP server
+--
+-- Now we use Servant and Warp to throw an HTTP interface in front of the
+-- relational definitions previously defined.
 
 type ConnectionPool = Pool Connection
 
