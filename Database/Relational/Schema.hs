@@ -32,8 +32,6 @@ module Database.Relational.Schema (
     , WellFormedForeignKeys
     , ForeignKeyForeignTableName
     , ForeignKeyReferences
-    , ForeignKeyReferenceLocal
-    , ForeignKeyReferenceForeign
     , ForeignKeyLocalColumns
     , ForeignKeyForeignColumns
     , IsPrimaryKey
@@ -54,6 +52,8 @@ import Types.Equal
 import Types.Member
 import Types.Subset
 import Types.Unique
+import Types.Append
+import Types.Concat
 
 -- A schema is a list of columns along with constraints on these columns.
 -- Since the kinds of constraint representations are disparate, we give a
@@ -62,89 +62,123 @@ import Types.Unique
 type Schema
     (columns :: [(Symbol, *)])
     -- The primary key is a list of column names.
-    (primaryKey :: [(Symbol, *)])
-    -- There can be more than one foreign key.
-    -- Each foreign key binds a set of columns from this schema to
-    -- a set of foreign names of the same length, all from the same table.
-    -- The second parameter in there is just a Symbol which names a table.
-    -- Ideally it would be the table itself, but this would rule out cyclic
-    -- foreign keys because type synonyms cannot be cyclic! Maybe that would
-    -- be a good thing, but cyclic foreign keys are sometimes ok.
-    (foreignKeys :: [([((Symbol, *), (Symbol, *))], Symbol)])
-    (unique :: [(Symbol, *)])
+    (primaryKey :: (Symbol, [(Symbol, *)]))
+    -- Foreign key format:
+    --   constraint name, local columns, foreign table name, foreign columns.
+    (foreignKeys :: [(Symbol, [(Symbol, *)], Symbol, [(Symbol, *)])])
+    (unique :: [(Symbol, [(Symbol, *)])])
     (notNull :: [(Symbol, *)])
-    (check :: [(Symbol, *)])
+    (check :: [(Symbol, [(Symbol, *)])])
     (deflt :: [(Symbol, *)])
   = '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt)
+
+type family ConstraintNames schema :: [Symbol] where
+    ConstraintNames '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) =
+           PrimaryKeyConstraintName primaryKey
+        ': Concat '[
+                 (UniqueConstraintNames unique)
+               , (CheckConstraintNames check)
+               , (ForeignKeyConstraintNames foreignKeys)
+               ]
+
+type family PrimaryKeyConstraintName primaryKey :: Symbol where
+    PrimaryKeyConstraintName '(name, columns) = name
+
+type family UniqueConstraintNames unique :: [Symbol] where
+    UniqueConstraintNames '[] = '[]
+    UniqueConstraintNames ( '(name, uniques) ': rest ) =
+        name ': UniqueConstraintNames rest
+
+type family CheckConstraintNames check :: [Symbol] where
+    CheckConstraintNames '[] = '[]
+    CheckConstraintNames ( '(name, checks) ': rest ) =
+        name ': CheckConstraintNames rest
+
+type family ForeignKeyConstraintNames foreignKeys :: [Symbol] where
+    ForeignKeyConstraintNames '[] = '[]
+    ForeignKeyConstraintNames ( '(name, localRefs, tableName, foreignRefs) ': rest ) =
+        name ': ForeignKeyConstraintNames rest
 
 type family SchemaColumns schema :: [(Symbol, *)] where
     SchemaColumns '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) = columns
 
-type family SchemaPrimaryKey schema :: [(Symbol, *)] where
+type family SchemaPrimaryKey schema :: (Symbol, [(Symbol, *)]) where
     SchemaPrimaryKey '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) = primaryKey
 
-type family SchemaForeignKeys schema where
+type family PrimaryKeyColumns primaryKey :: [(Symbol, *)] where
+    PrimaryKeyColumns '(name, columns) = columns
+
+type family SchemaForeignKeys schema :: [(Symbol, [(Symbol, *)], Symbol, [(Symbol, *)])] where
     SchemaForeignKeys '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) = foreignKeys
 
-type family SchemaUnique schema where
+type family SchemaUnique schema :: [(Symbol, [(Symbol, *)])] where
     SchemaUnique '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) = unique
 
-type family SchemaNotNull schema where
+type family UniqueColumns uniques :: [(Symbol, *)] where
+    UniqueColumns '[] = '[]
+    UniqueColumns ( '(name, columns) ': rest ) = Append columns (UniqueColumns rest)
+
+type family SchemaNotNull schema :: [(Symbol, *)] where
     SchemaNotNull '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) = notNull
 
-type family SchemaCheck schema where
+type family SchemaCheck schema :: [(Symbol, [(Symbol, *)])]  where
     SchemaCheck '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) = check
+
+type family CheckColumns checks :: [(Symbol, *)] where
+    CheckColumns '[] = '[]
+    CheckColumns ( '(name, columns) ': rest ) = Append columns (CheckColumns rest)
 
 type family SchemaDefault schema where
     SchemaDefault '(columns, primaryKey, foreignKeys, unique, notNull, check, deflt) = deflt
 
-type family ForeignKeyReferenceLocal (ref :: ((Symbol, *), (Symbol, *))) :: (Symbol, *) where
-    ForeignKeyReferenceLocal '(local, freign) = local
-
-type family ForeignKeyReferenceForeign (ref :: ((Symbol, *), (Symbol, *))) :: (Symbol, *) where
-    ForeignKeyReferenceForeign '(local, freign) = freign
-
 type family ForeignKeyForeignTableName foreignKey where
-    ForeignKeyForeignTableName '(refs, name) = name
+    ForeignKeyForeignTableName '(name, localRefs, tableName, foreignRefs) = tableName
 
-type family ForeignKeyReferences (foreignKey :: ([((Symbol, *), (Symbol, *))], Symbol)) :: [((Symbol, *), (Symbol, *))] where
-    ForeignKeyReferences '(references, name) = references
+type family ForeignKeyReferences (foreignKey :: (Symbol, [(Symbol, *)], Symbol, [(Symbol, *)])) :: ([(Symbol, *)], [(Symbol, *)]) where
+    ForeignKeyReferences '(name, localRefs, tableName, foreignRefs) =
+        '(localRefs, foreignRefs)
 
 type family ForeignKeyLocalColumns foreignKey :: [(Symbol, *)] where
-    ForeignKeyLocalColumns '( '[], name ) = '[]
-    ForeignKeyLocalColumns '( '(local, freign) ': rest, name ) = local ': ForeignKeyLocalColumns '( rest, name )
+    ForeignKeyLocalColumns '( keyName, '[], tableName, foreignRefs ) = '[]
+    ForeignKeyLocalColumns '( keyName, local ': locals, tableName, foreignRefs ) =
+        local ': ForeignKeyLocalColumns '( keyName, locals, tableName, foreignRefs )
 
 type family ForeignKeyForeignColumns foreignKey :: [(Symbol, *)] where
-    ForeignKeyForeignColumns '( '[], name ) = '[]
-    ForeignKeyForeignColumns '( '(local, freign) ': rest, name ) = freign ': ForeignKeyForeignColumns '( rest, name )
+    ForeignKeyForeignColumns '( keyName, localRefs, tableName, '[] ) = '[]
+    ForeignKeyForeignColumns '( keyName, localRefs, tableName, freign ': freigns ) =
+        freign ': ForeignKeyForeignColumns '( keyName, localRefs, tableName, freigns )
 
 type family ForeignKeyLocalNames foreignKey :: [Symbol] where
-    ForeignKeyLocalNames '( '[], name ) = '[]
-    ForeignKeyLocalNames '( '(local, freign) ': rest, name ) = ColumnName local ': ForeignKeyLocalNames '(rest, name)
+    ForeignKeyLocalNames '( keyName, '[], tableName, foreignRefs ) = '[]
+    ForeignKeyLocalNames '( keyName, local ': locals, tableName, foreignRefs ) =
+        ColumnName local ': ForeignKeyLocalNames '(keyName, locals, tableName, foreignRefs)
 
 type family ForeignKeyForeignNames foreignKey :: [Symbol] where
-    ForeignKeyForeignNames '( '[], name ) = '[]
-    ForeignKeyForeignNames '( '(local, freign) ': rest, name ) = ColumnName freign ': ForeignKeyForeignNames '(rest, name)
+    ForeignKeyForeignNames '( keyName, localRefs, tableName, '[] ) = '[]
+    ForeignKeyForeignNames '( keyName, localRefs, tableName, freign ': freigns ) =
+        ColumnName freign ': ForeignKeyForeignNames '(keyName, localRefs, tableName, freigns)
 
 -- Columns must be from the local table.
 type family ForeignKeyLocalTypes foreignKey :: [*] where
-    ForeignKeyLocalTypes '( '[], name ) = '[]
-    ForeignKeyLocalTypes '( ( '( local, freign ) ': rest), name ) = ColumnType local ': ForeignKeyLocalTypes '(rest, name)
+    ForeignKeyLocalTypes '( keyName, '[], tableName, foreignRefs ) = '[]
+    ForeignKeyLocalTypes '( keyName, local ': locals, tableName, foreignRefs ) =
+        ColumnType local ': ForeignKeyLocalTypes '(keyName, locals, tableName, foreignRefs)
 
 -- Columns must be from the foreign table.
 type family ForeignKeyForeignTypes foreignKey :: [*] where
-    ForeignKeyForeignTypes '( '[], name ) = '[]
-    ForeignKeyForeignTypes '( '(local, freign) ': rest, name ) = ColumnType freign ': ForeignKeyForeignTypes '(rest, name)
+    ForeignKeyForeignTypes '( keyName, localRefs, tableName, '[] ) = '[]
+    ForeignKeyForeignTypes '( keyName, localRefs, tableName, freign ': freigns ) =
+        ColumnType freign ': ForeignKeyForeignTypes '(keyName, localRefs, tableName, freigns)
 
 -- We assume the foreign key's foreign reference is in the database, else this
 -- will get "stuck".
 type family ForeignKeyForeignSchema foreignKey database where
-    ForeignKeyForeignSchema '(refs, name) ( '(name, schema) ': rest ) = schema
-    ForeignKeyForeignSchema '(refs, name) ( '(eman, schema) ': rest ) = ForeignKeyForeignSchema '( refs, name ) rest
+    ForeignKeyForeignSchema '(keyName, localRefs, tableName, foreignRefs) ( '(tableName, schema) ': rest ) = schema
+    ForeignKeyForeignSchema '(keyName, localRefs, tableName, foreignRefs) ( '(emaNelbat, schema) ': rest ) = ForeignKeyForeignSchema '( keyName, localRefs, tableName, foreignRefs ) rest
 
 type family IsPrimaryKey column schema :: Bool where
     IsPrimaryKey column schema =
-        Member column (SchemaPrimaryKey schema)
+        Member column (PrimaryKeyColumns (SchemaPrimaryKey schema))
 
 type family IsForeignKey column schema :: Bool where
     IsForeignKey column schema = IsForeignKeyRec column (SchemaForeignKeys schema)
@@ -158,7 +192,7 @@ type family IsForeignKeyRec column foreignKeys :: Bool where
 
 type family IsUnique column schema :: Bool where
     IsUnique column schema =
-        Or (IsPrimaryKey column schema) (Member column (SchemaUnique schema))
+        Or (IsPrimaryKey column schema) (Member column (UniqueColumns (SchemaUnique schema)))
 
 type family IsNotNull column schema :: Bool where
     IsNotNull column schema =
@@ -181,6 +215,7 @@ type family IsNullable column schema :: Bool where
 type family WellFormedSchema name schema database :: Constraint where
     WellFormedSchema name schema database = (
           Unique (ColumnNames (SchemaColumns schema)) ~ 'True
+        , Unique (ConstraintNames schema) ~ 'True
         , WellFormedPrimaryKey (SchemaPrimaryKey schema) schema
         , WellFormedForeignKeys (SchemaForeignKeys schema) schema name database
         , WellFormedUnique (SchemaUnique schema) schema
@@ -202,7 +237,7 @@ type family LookupColumn (name :: Symbol) (columns :: [(Symbol, *)]) :: (Symbol,
 -- Must check that the primary key column names are unique, and that they
 -- indeed correspond to column names in the schema.
 type family WellFormedPrimaryKey primaryKey schema :: Constraint where
-    WellFormedPrimaryKey columns schema = (
+    WellFormedPrimaryKey '(name, columns) schema = (
           Unique (ColumnNames columns) ~ 'True
         , Subset columns (SchemaColumns schema) ~ 'True
         )
@@ -225,7 +260,8 @@ type family WellFormedForeignKey foreignKey columns name database :: Constraint 
         -- This is another way of asserting that there must be at least one
         -- foreign reference, ruling out '( '[], "tableName" ) as a
         -- well-formed foreign key.
-        , Subset (ForeignKeyReferences foreignKey) '[] ~ 'False
+        , Subset (ForeignKeyLocalColumns foreignKey) '[] ~ 'False
+        , Subset (ForeignKeyForeignColumns foreignKey) '[] ~ 'False
         , Unique (ForeignKeyLocalNames foreignKey) ~ 'True
         , Subset (ForeignKeyLocalColumns foreignKey) columns ~ 'True
         , Unique (ForeignKeyForeignNames foreignKey) ~ 'True
@@ -235,8 +271,8 @@ type family WellFormedForeignKey foreignKey columns name database :: Constraint 
 
 type family WellFormedUnique unique schema :: Constraint where
     WellFormedUnique unique schema = (
-          Unique (ColumnNames unique) ~ 'True
-        , Subset unique (SchemaColumns schema) ~ 'True
+          Unique (ColumnNames (UniqueColumns unique)) ~ 'True
+        , Subset (UniqueColumns unique) (SchemaColumns schema) ~ 'True
         )
 
 type family WellFormedNotNull notNull schema :: Constraint where

@@ -16,4 +16,4 @@ module Database.Relational.NotNull (
 
     ) where
 
-data NOT_NULL term = NOT_NULL term
+data NOT_NULL = NOT_NULL

@@ -25,7 +25,7 @@ Portability : non-portable (GHC only)
 
 module Examples.PostgresUniverse where
 
-import GHC.TypeLits (Symbol, KnownSymbol, symbolVal, Nat, KnownNat, natVal)
+import GHC.TypeLits (Symbol, KnownSymbol, symbolVal, SomeSymbol(..), someSymbolVal, Nat, KnownNat, natVal)
 import Control.Monad (forM_)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
@@ -46,12 +46,6 @@ import Database.Relational.Database
 import Database.Relational.Table
 import Database.Relational.Schema
 import Database.Relational.Column
-import Database.Relational.Value.Database
-import Database.Relational.Value.Table
-import Database.Relational.Value.Schema
-import Database.Relational.Value.Columns
-import Database.Relational.Value.PrimaryKey
-import Database.Relational.Value.ForeignKeys
 import Database.Relational.Select
 import Database.Relational.Insert
 import Database.Relational.Delete
@@ -83,7 +77,8 @@ import Database.Relational.ForeignKey
 import Database.Relational.Default
 import Database.Relational.Unique
 import Database.Relational.NotNull
-import Database.Relational.SetDefault
+import Database.Relational.Default
+import Database.Relational.Set
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
@@ -105,8 +100,8 @@ data PostgresUniverse = PostgresUniverse
 -- with Identity <-> Only, which is a To/FromRow notion.
 -- 
 instance ToField t => ToField (Default t) where
-    toField (DEFAULT) = toField PT.Default
-    toField (NOT_DEFAULT t) = toField t
+    toField (DEFAULT_VALUE) = toField PT.Default
+    toField (NOT_DEFAULT_VALUE t) = toField t
 
 class
     ( ToField t
@@ -158,215 +153,245 @@ instance RelationalUniverse PostgresUniverse where
 
 -- |
 -- = Database and table creation
+
+-- Generate a monadic (could be applicative) term acts like this:
+--   - create all tables and add columns
+--   - for each table, add its schema constraints
 --
--- Creating a database proceeds as follows:
--- - Create all tables and add their columns, without its schema's constraints.
--- - For each table, add all of its schema's constraints.
---
--- TODO slight refactor, in which we factor out query generation into some
--- monoid m. This is to be consistent with query generation.
--- TODO BIGGGG refactor. This should be done just like other SQL: write it
--- out for yourself using Haskell datatypes. We'll give a Postgres
--- interpreter for things like CREATE and ADD (CONSTRAINT ... )
--- and then we'll also give automatic generation of these terms from
--- database types.
+-- There's also parameters which depend upon the number of defaults.
+-- How will we handle that?
 
-createDatabase
-    :: forall database tables .
-       ( )
-    => DatabaseD database PostgresUniverse tables
-    -> ReaderT Connection IO ()
-createDatabase databased = do createTables databased
-                              createConstraints databased
+-- | In practice, we'll want an instance where tables ~ DatabaseTables database.
+--   We need both parameters so that we can have the whole database in scope
+--   as we recurse on the list of tables.
+class
+    (
+    ) => CreateDatabase database universe tables
+  where
+    type CreateDatabaseType database universe tables :: *
+    createDatabase :: DATABASE database -> universe -> Proxy tables -> CreateDatabaseType database universe tables
 
-createTables
-    :: forall database tables .
-       ( )
-    => DatabaseD database PostgresUniverse tables
-    -> ReaderT Connection IO ()
-createTables databased = case databased of
-    DatabaseDNil -> return ()
-    DatabaseDCons tabled rest -> do createTable tabled
-                                    createTables rest
+instance
+    (
+    ) => CreateDatabase database PostgresUniverse '[]
+  where
+    type CreateDatabaseType database PostgresUniverse '[] = ReaderT Connection IO ()
+    createDatabase _ _ _ = return ()
 
-createTable
-    :: forall database table . 
-       ( )
-    => TableD database PostgresUniverse table
-    -> ReaderT Connection IO ()
-createTable tabled = case tabled of
-    TableD proxyTable schemad -> case schemad of
-        SchemaD proxySchema columnsd primarykeyd foreignkeysd -> 
-            let query = concat [
-                          "CREATE TABLE "
-                        , symbolVal (Proxy :: Proxy (TableName table))
-                        , " ()"
-                        ]
-            in  do connection <- ask
-                   lift $ execute_ connection (fromString query)
-                   addColumns proxyTable columnsd
-                   return ()
+instance
+    ( CreateTable database PostgresUniverse table
+    ,   CreateTableType database PostgresUniverse table
+      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
 
-addColumns
-    :: forall database columns table .
-       ( KnownSymbol (TableName table)
-       )
-    => Proxy table
-    -> ColumnsD database PostgresUniverse columns
-    -> ReaderT Connection IO ()
-addColumns proxyTable columnsd = case columnsd of
-    ColumnsDNil -> return ()
-    ColumnsDCons proxyColumn rest -> do addColumn proxyTable proxyColumn
-                                        addColumns proxyTable rest
+    , AddColumns database PostgresUniverse table (SchemaColumns (TableSchema table))
+    ,   AddColumnsType database PostgresUniverse table (SchemaColumns (TableSchema table))
+      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
 
-addColumn
-    :: forall database table column .
-       ( KnownSymbol (ColumnName column)
-       , PostgresUniverseConstraint (ColumnType column)
-       , KnownSymbol (TableName table)
-       )
-    => Proxy table
-    -> Proxy column
-    -> ReaderT Connection IO ()
-addColumn _ _ =
-    let query = concat [
-                  "ALTER TABLE "
-                , symbolVal (Proxy :: Proxy (TableName table))
-                , " ADD COLUMN "
-                , symbolVal (Proxy :: Proxy (ColumnName column))
-                , " "
-                , postgresUniverseTypeId (Proxy :: Proxy (ColumnType column))
-                ]
-    in  do connection <- ask
-           lift $ execute_ connection (fromString query)
-           return ()
+    , AddPrimaryKey database PostgresUniverse table (SchemaPrimaryKey (TableSchema table))
+    ,   AddPrimaryKeyType database PostgresUniverse table (SchemaPrimaryKey (TableSchema table))
+      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
 
-createConstraints
-    :: forall database tables .
-       ( )
-    => DatabaseD database PostgresUniverse tables
-    -> ReaderT Connection IO ()
-createConstraints databased = case databased of
-    DatabaseDNil -> return ()
-    DatabaseDCons tabled rest -> do createTableConstraints tabled
-                                    createConstraints rest
+    , AddUniques database PostgresUniverse table (SchemaUnique (TableSchema table))
+    ,   AddUniquesType database PostgresUniverse table (SchemaUnique (TableSchema table))
+      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
 
-createTableConstraints
-    :: forall database table .
-       ( )
-    => TableD database PostgresUniverse table
-    -> ReaderT Connection IO ()
-createTableConstraints tabled = case tabled of
-    TableD proxyTable schemad -> case schemad of
-        SchemaD proxySchema _ primarykeyd foreignkeysd ->
-            do createPrimaryKey proxyTable primarykeyd
-               createForeignKeys proxyTable foreignkeysd
-               return ()
+    , AddNotNulls database PostgresUniverse table (SchemaNotNull (TableSchema table))
+    ,   AddNotNullsType database PostgresUniverse table (SchemaNotNull (TableSchema table))
+      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
 
-createPrimaryKey
-    :: forall database table primarykey .
-       ( KnownSymbol (TableName table) )
-    => Proxy table
-    -> PrimaryKeyD database PostgresUniverse (TableSchema table) primarykey
-    -> ReaderT Connection IO ()
-createPrimaryKey proxyTable primarykeyd =
-    let columnNames = primaryKeyColumnsStrings primarykeyd
-        tableName = symbolVal (Proxy :: Proxy (TableName table))
-        constraintName = "pk_" ++ tableName
-        query = concat [
-                  "ALTER TABLE "
-                , tableName
-                , " ADD CONSTRAINT "
-                , constraintName
-                , " PRIMARY KEY ("
-                , concat (intersperse "," columnNames)
-                , ")"
-                ]
-    in  do connection <- ask
-           lift $ execute_ connection (fromString query)
-           return ()
+    , CreateDatabase database PostgresUniverse tables
+    ,   CreateDatabaseType database PostgresUniverse tables
+      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
 
-primaryKeyColumnsStrings
-    :: forall database universe schema primarykey .
-       ( )
-    => PrimaryKeyD database universe schema primarykey
-    -> [String]
-primaryKeyColumnsStrings primarykeyd = case primarykeyd of
-    PrimaryKeyDNil -> []
-    PrimaryKeyDCons (proxy :: Proxy col) rest ->
-          symbolVal (Proxy :: Proxy (ColumnName col))
-        : primaryKeyColumnsStrings rest
+    , AddForeignKeys database PostgresUniverse table (SchemaForeignKeys (TableSchema table))
+    ,   AddForeignKeysType database PostgresUniverse table (SchemaForeignKeys (TableSchema table))
+      ~ CreateDatabaseType database PostgresUniverse (table ': tables)
 
-createForeignKeys
-    :: forall database table foreignKeys .
-       ( KnownSymbol (TableName table) 
-       )
-    => Proxy table
-    -> ForeignKeysD database PostgresUniverse (TableSchema table) foreignKeys
-    -> ReaderT Connection IO ()
-createForeignKeys proxyTable foreignkeysd = case foreignkeysd of
-    ForeignKeysDNil -> return ()
-    ForeignKeysDCons foreignKeyRefs proxyForeignTableName rest ->
-        do createForeignKey (Proxy :: Proxy (TableName table)) proxyForeignTableName foreignKeyRefs
-           createForeignKeys proxyTable rest
+    ) => CreateDatabase database PostgresUniverse (table ': tables)
+  where
+    type CreateDatabaseType database PostgresUniverse (table ': tables) = ReaderT Connection IO ()
+    createDatabase database PostgresUniverse _ = do
+        createTable database PostgresUniverse (TABLE :: TABLE table)
+        addColumns database PostgresUniverse (TABLE :: TABLE table) (COLUMNS :: COLUMNS (SchemaColumns (TableSchema table)))
+        addPrimaryKey database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaPrimaryKey (TableSchema table)))
+        addUniques database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaUnique (TableSchema table)))
+        addNotNulls database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaNotNull (TableSchema table)))
+        createDatabase database PostgresUniverse (Proxy :: Proxy tables)
+        -- Add foreign keys now that all tables are present.
+        addForeignKeys database PostgresUniverse (TABLE :: TABLE table) (Proxy :: Proxy (SchemaForeignKeys (TableSchema table)))
+        return ()
 
-createForeignKey
-    :: forall database refs localTableName foreignTableName .
-       ( KnownSymbol localTableName
-       , KnownSymbol foreignTableName
-       )
-    => Proxy localTableName
-    -> Proxy foreignTableName
-    -> ForeignKeyReferencesD refs
-    -> ReaderT Connection IO ()
-createForeignKey proxyLocalName proxyForeignName foreignKeyReferencesd =
-    let names = foreignKeyReferenceColumnsStrings foreignKeyReferencesd
-        localNames = fmap fst names
-        foreignNames = fmap snd names
-        localTableName = symbolVal proxyLocalName
-        foreignTableName = symbolVal proxyForeignName
-        constraintName = concat ["fk_", localTableName, "_", foreignTableName]
-        query = concat [
-                  "ALTER TABLE "
-                , localTableName
-                , " ADD CONSTRAINT "
-                , constraintName
-                , " FOREIGN KEY ("
-                , concat (intersperse "," localNames)
-                , ") REFERENCES "
-                , foreignTableName
-                , " ("
-                , concat (intersperse "," foreignNames)
-                , ")"
-                ]
-    in  do connection <- ask
-           lift $ execute_ connection (fromString query)
-           return ()
+class
+    (
+    ) => CreateTable database universe table
+  where
+    type CreateTableType database universe table :: *
+    createTable
+        :: DATABASE database
+        -> universe
+        -> TABLE table
+        -> CreateTableType database universe table
 
-foreignKeyReferenceColumnsStrings
-    :: forall refs .
-       (
-       )
-    => ForeignKeyReferencesD refs
-    -> [(String, String)]
-foreignKeyReferenceColumnsStrings foreignKeyReferenced = case foreignKeyReferenced of
-    ForeignKeyReferencesDNil -> []
-    ForeignKeyReferencesDCons (proxy :: Proxy ref) rest ->
-          (symbolVal (Proxy :: Proxy (ColumnName (ForeignKeyReferenceLocal ref))), symbolVal (Proxy :: Proxy (ColumnName (ForeignKeyReferenceForeign ref))))
-        : (foreignKeyReferenceColumnsStrings rest)
+instance
+    ( RunRelational database PostgresUniverse (CREATE (TABLE table))
+    ) => CreateTable database PostgresUniverse table
+  where
+    type CreateTableType database PostgresUniverse table = ReaderT Connection IO ()
+    createTable database PostgresUniverse table = do
+        runRelational database PostgresUniverse (createTable_ table)
+        return ()
 
-createTableQuery
-    :: ( IsString m
-       , Monoid m
-       , KnownSymbol tableName
-       )
-    => Proxy tableName
-    -> m
-createTableQuery proxyTableName = mconcat [
-      fromString "CREATE TABLE "
-    , fromString (symbolVal proxyTableName)
-    , " ()"
-    ]
+class
+    (
+    ) => AddColumns database universe table columns
+  where
+    type AddColumnsType database universe table columns :: *
+    addColumns
+        :: DATABASE database
+        -> universe
+        -> TABLE table
+        -> COLUMNS columns
+        -> AddColumnsType database universe table columns
+
+instance
+    (
+    ) => AddColumns database PostgresUniverse table '[]
+  where
+    type AddColumnsType database PostgresUniverse table '[] = ReaderT Connection IO ()
+    addColumns _ _ _ _ = return ()
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (ADD (COLUMN column)))
+    , AddColumns database PostgresUniverse table columns
+    ,   AddColumnsType database PostgresUniverse table (column ': columns)
+      ~ AddColumnsType database PostgresUniverse table columns
+    ) => AddColumns database PostgresUniverse table (column ': columns)
+  where
+    type AddColumnsType database PostgresUniverse table (column ': columns) = ReaderT Connection IO ()
+    addColumns database PostgresUniverse table columns = do
+        runRelational database PostgresUniverse (addColumn_ table (COLUMN :: COLUMN column))
+        addColumns database PostgresUniverse table (COLUMNS :: COLUMNS columns)
+        return ()
+
+class
+    (
+    ) => AddPrimaryKey database universe table pkey
+  where
+    type AddPrimaryKeyType database universe table pkey :: *
+    addPrimaryKey
+        :: DATABASE database
+        -> universe
+        -> TABLE table
+        -> Proxy pkey
+        -> AddPrimaryKeyType database universe table pkey
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (PRIMARY_KEY (COLUMNS columns)))))
+    , MakeColumnsClauses columns Query
+    , KnownSymbol name
+    ) => AddPrimaryKey database PostgresUniverse table '(name, columns)
+  where
+    type AddPrimaryKeyType database PostgresUniverse table '(name, columns) = ReaderT Connection IO ()
+    addPrimaryKey database PostgresUniverse table _ = do
+        let name = symbolVal (Proxy :: Proxy name)
+        runRelational database PostgresUniverse (addPrimaryKey_ table (NAME :: NAME name) (COLUMNS :: COLUMNS columns))
+        return ()
+
+class
+    (
+    ) => AddForeignKeys database universe table fkeys
+  where
+    type AddForeignKeysType database universe table fkeys :: *
+    addForeignKeys
+        :: DATABASE database
+        -> universe
+        -> TABLE table
+        -> Proxy fkeys
+        -> AddForeignKeysType database universe table fkeys
+
+instance
+    (
+    ) => AddForeignKeys database PostgresUniverse table '[]
+  where
+    type AddForeignKeysType database PostgresUniverse table '[] = ReaderT Connection IO ()
+    addForeignKeys _ _ _ _ = return ()
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (FOREIGN_KEY (COLUMNS localColumns) (NAME foreignTableName) (COLUMNS foreignColumns)))))
+    , AddForeignKeys database PostgresUniverse table namedFKeys
+    ,   AddForeignKeysType database PostgresUniverse table ( '(name, localColumns, foreignTableName, foreignColumns) ': namedFKeys )
+      ~ AddForeignKeysType database PostgresUniverse table namedFKeys
+    ) => AddForeignKeys database PostgresUniverse table ( '(name, localColumns, foreignTableName, foreignColumns) ': namedFKeys )
+  where
+    type AddForeignKeysType database PostgresUniverse table ( '(name, localColumns, foreignTableName, foreignColumns) ': namedFKeys ) =
+        ReaderT Connection IO ()
+    addForeignKeys database PostgresUniverse table _ = do
+        runRelational database PostgresUniverse (addForeignKey_ table (NAME :: NAME name) (COLUMNS :: COLUMNS localColumns) (NAME :: NAME foreignTableName) (COLUMNS :: COLUMNS foreignColumns))
+        addForeignKeys database PostgresUniverse table (Proxy :: Proxy namedFKeys)
+
+class
+    (
+    ) => AddUniques database universe table uniques
+  where
+    type AddUniquesType database universe table uniques :: *
+    addUniques
+        :: DATABASE database
+        -> universe
+        -> TABLE table
+        -> Proxy uniques
+        -> AddUniquesType database universe table uniques
+
+instance
+    (
+    ) => AddUniques database PostgresUniverse table '[]
+  where
+    type AddUniquesType database PostgresUniverse table '[] = ReaderT Connection IO ()
+    addUniques _ _ _ _ = return ()
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (UNIQUE (COLUMNS columns)))))
+    , AddUniques database PostgresUniverse table uniques
+    ,   AddUniquesType database PostgresUniverse table ( '(name, columns) ': uniques )
+      ~ AddUniquesType database PostgresUniverse table uniques
+    ) => AddUniques database PostgresUniverse table ( '(name, columns) ': uniques)
+  where
+    type AddUniquesType database PostgresUniverse table ( '(name, columns) ': uniques ) =
+        ReaderT Connection IO ()
+    addUniques database PostgresUniverse table _ = do
+        runRelational database PostgresUniverse (addUnique_ table (NAME :: NAME name) (COLUMNS :: COLUMNS columns))
+        addUniques database PostgresUniverse table (Proxy :: Proxy uniques)
+
+class
+    (
+    ) => AddNotNulls database universe table notNulls
+  where
+    type AddNotNullsType database universe table notNulls :: *
+    addNotNulls
+        :: DATABASE database
+        -> universe
+        -> TABLE table
+        -> Proxy notNulls
+        -> AddNotNullsType database universe table notNulls
+
+instance
+    (
+    ) => AddNotNulls database PostgresUniverse table '[]
+  where
+    type AddNotNullsType database PostgresUniverse table '[] = ReaderT Connection IO ()
+    addNotNulls _ _ _ _ = return ()
+
+instance
+    ( RunRelational database PostgresUniverse (ALTER (TABLE table) (SET NOT_NULL (COLUMN column)))
+    , AddNotNulls database PostgresUniverse table notNulls
+    ,   AddNotNullsType database PostgresUniverse table ( column ': notNulls )
+      ~ AddNotNullsType database PostgresUniverse table notNulls
+    ) => AddNotNulls database PostgresUniverse table ( column ': notNulls )
+  where
+    type AddNotNullsType database PostgresUniverse table ( column ': notNulls ) =
+        ReaderT Connection IO ()
+    addNotNulls database PostgresUniverse table _ = do
+        runRelational database PostgresUniverse (addNotNull_ table (COLUMN :: COLUMN column))
+        addNotNulls database PostgresUniverse table (Proxy :: Proxy notNulls)
 
 createTable_ :: TABLE table -> CREATE (TABLE table)
 createTable_ table = CREATE table
@@ -389,11 +414,11 @@ addForeignKey_
     :: TABLE table
     -> NAME name
     -> COLUMNS localColumns
-    -> TABLE foreignTable
+    -> NAME foreignTableName
     -> COLUMNS foreignColumns
-    -> ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (FOREIGN_KEY (COLUMNS localColumns) (TABLE foreignTable) (COLUMNS foreignColumns))))
-addForeignKey_ table name localColumns foreignTable foreignColumns =
-    ALTER table (ADD (CONSTRAINT name (FOREIGN_KEY localColumns foreignTable foreignColumns)))
+    -> ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (FOREIGN_KEY (COLUMNS localColumns) (NAME foreignTableName) (COLUMNS foreignColumns))))
+addForeignKey_ table name localColumns foreignTableName foreignColumns =
+    ALTER table (ADD (CONSTRAINT name (FOREIGN_KEY localColumns foreignTableName foreignColumns)))
 
 addUnique_
     :: TABLE table
@@ -404,106 +429,16 @@ addUnique_ table name columns = ALTER table (ADD (CONSTRAINT name (UNIQUE column
 
 addNotNull_
     :: TABLE table
-    -> NAME name
-    -> COLUMNS columns
-    -> ALTER (TABLE table) (ADD (CONSTRAINT (NAME name) (NOT_NULL (COLUMNS columns))))
-addNotNull_ table name columns = ALTER table (ADD (CONSTRAINT name (NOT_NULL columns)))
+    -> COLUMN column
+    -> ALTER (TABLE table) (SET NOT_NULL (COLUMN column))
+addNotNull_ table column = ALTER table (SET NOT_NULL column)
 
 addDefault_
     :: TABLE table
     -> COLUMN column
     -> ColumnType column
-    -> ALTER (TABLE table) (SET_DEFAULT (COLUMN column) (ColumnType column))
-addDefault_ table column value = ALTER table (SET_DEFAULT column value)
-
-addColumnQuery
-    :: forall m table column .
-       ( IsString m
-       , Monoid m
-       , KnownSymbol (ColumnName column)
-       , KnownSymbol (TableName table)
-       , PostgresUniverseConstraint (ColumnType column)
-       )
-    => Proxy table
-    -> Proxy column
-    -> m
-addColumnQuery _ _ = mconcat [
-      fromString "ALTER TABLE "
-    , fromString (symbolVal (Proxy :: Proxy (TableName table)))
-    , fromString " ADD COLUMN "
-    , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
-    , fromString " "
-    , fromString (postgresUniverseTypeId (Proxy :: Proxy (ColumnType column)))
-    ]
-
-addConstraintUniqueQuery
-    :: ( IsString m
-       , Monoid m
-       , KnownSymbol tableName
-       , KnownSymbol columnName
-       )
-    => Proxy tableName
-    -> Proxy columnName
-    -> m
-addConstraintUniqueQuery proxyTableName proxyColumnName = mconcat [
-      fromString "ALTER TABLE "
-    , fromString (symbolVal proxyTableName)
-    , fromString " ADD CONSTRAINT "
-    , constraintName
-    , fromString " UNIQUE ("
-    , fromString (symbolVal proxyColumnName)
-    , fromString ")"
-    ]
-  where
-    constraintName = mconcat [
-          fromString "unique_"
-        , fromString (symbolVal proxyTableName)
-        , fromString "_"
-        , fromString (symbolVal proxyColumnName)
-        ]
-
-addConstraintNotNullQuery
-    :: ( IsString m
-       , Monoid m
-       , KnownSymbol tableName
-       , KnownSymbol columnName
-       )
-    => Proxy tableName
-    -> Proxy columnName
-    -> m
-addConstraintNotNullQuery proxyTableName proxyColumnName = mconcat [
-      fromString "ALTER TABLE "
-    , fromString (symbolVal proxyTableName)
-    , fromString " ADD CONSTRAINT "
-    , constraintName
-    , fromString " NOT NULL ("
-    , fromString (symbolVal proxyColumnName)
-    , fromString ")"
-    ]
-  where
-    constraintName = mconcat [
-          fromString "not_null_"
-        , fromString (symbolVal proxyTableName)
-        , fromString "_"
-        , fromString (symbolVal proxyColumnName)
-        ]
-
-addConstraintDefaultQuery
-    :: ( IsString m
-       , Monoid m
-       , KnownSymbol tableName
-       , KnownSymbol columnName
-       )
-    => Proxy tableName
-    -> Proxy columnName
-    -> m
-addConstraintDefaultQuery proxyTableName proxyColumnName = mconcat [
-      fromString "ALTER TABLE "
-    , fromString (symbolVal proxyTableName)
-    , fromString " ALTER COLUMN "
-    , fromString (symbolVal proxyColumnName)
-    , fromString " SET DEFAULT ?"
-    ]
+    -> ALTER (TABLE table) (SET (DEFAULT (COLUMN column)) (ColumnType column))
+addDefault_ table column value = ALTER table (SET (DEFAULT column) value)
 
 -- |
 -- = Generating queries
@@ -605,16 +540,16 @@ instance
     ( Monoid m
     , IsString m
     , MakeColumnsClauses localColumns m
-    , KnownSymbol (TableName foreignTable)
+    , KnownSymbol foreignTableName
     , MakeColumnsClauses foreignColumns m
-    ) => MakeQuery universe (FOREIGN_KEY (COLUMNS localColumns) (TABLE foreignTable) (COLUMNS foreignColumns)) m
+    ) => MakeQuery universe (FOREIGN_KEY (COLUMNS localColumns) (NAME foreignTableName) (COLUMNS foreignColumns)) m
   where
     makeQuery universe term = case term of
-        FOREIGN_KEY localColumns foreignTable foreignColumns -> mconcat [
+        FOREIGN_KEY localColumns foreignTableName foreignColumns -> mconcat [
               fromString "FOREIGN KEY ("
             , mconcat (intersperse (fromString ", ") (makeColumnsClauses localColumns))
             , fromString ") REFERENCES \""
-            , fromString  (symbolVal (Proxy :: Proxy (TableName foreignTable)))
+            , fromString  (symbolVal (Proxy :: Proxy foreignTableName))
             , fromString "\" ("
             , mconcat (intersperse (fromString ", ") (makeColumnsClauses foreignColumns))
             , fromString ")"
@@ -633,17 +568,20 @@ instance
             , fromString ")"
             ]
 
+-- TODO TONIGHT: oops, NOT_NULL constraints do not get names and apply to
+-- one column at a time, like default.
+-- Fix this up.
 instance
     ( Monoid m
     , IsString m
-    , MakeColumnsClauses columns m
-    ) => MakeQuery universe (NOT_NULL (COLUMNS columns)) m
+    , KnownSymbol (ColumnName column)
+    ) => MakeQuery universe (SET NOT_NULL (COLUMN column)) m
   where
     makeQuery universe term = case term of
-        NOT_NULL columns -> mconcat [
-              fromString "NOT_NULL ("
-            , mconcat (intersperse (fromString ", ") (makeColumnsClauses columns))
-            , fromString ")"
+        SET NOT_NULL column -> mconcat [
+              fromString "ALTER COLUMN "
+            , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
+            , " SET NOT NULL"
             ]
 
 instance
@@ -651,10 +589,10 @@ instance
     , IsString m
     , KnownSymbol (ColumnName column)
     , ty ~ ColumnType column
-    ) => MakeQuery universe (SET_DEFAULT (COLUMN column) ty) m
+    ) => MakeQuery universe (SET (DEFAULT (COLUMN column)) ty) m
   where
     makeQuery universe term = case term of
-        SET_DEFAULT column _ -> mconcat [
+        SET (DEFAULT column) _ -> mconcat [
               fromString "ALTER COLUMN \""
             , fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
             , fromString "\" SET DEFAULT ?"
@@ -1288,9 +1226,9 @@ instance
 
 instance
     (
-    ) => MakeQueryParameters PostgresUniverse (FOREIGN_KEY (COLUMNS localColumns) (TABLE foreignTable) (COLUMNS foreignColumns))
+    ) => MakeQueryParameters PostgresUniverse (FOREIGN_KEY (COLUMNS localColumns) (NAME foreignTableName) (COLUMNS foreignColumns))
   where
-    type QueryParametersType PostgresUniverse (FOREIGN_KEY (COLUMNS localColumns) (TABLE foreignTable) (COLUMNS foreignColumns)) = ()
+    type QueryParametersType PostgresUniverse (FOREIGN_KEY (COLUMNS localColumns) (NAME foreignTableName) (COLUMNS foreignColumns)) = ()
     makeQueryParameters _ _ = ()
 
 instance
@@ -1302,18 +1240,18 @@ instance
 
 instance
     (
-    ) => MakeQueryParameters PostgresUniverse (NOT_NULL (COLUMNS columns))
+    ) => MakeQueryParameters PostgresUniverse (SET NOT_NULL (COLUMN column))
   where
-    type QueryParametersType PostgresUniverse (NOT_NULL (COLUMNS columns)) = ()
+    type QueryParametersType PostgresUniverse (SET NOT_NULL (COLUMN column)) = ()
     makeQueryParameters _ _ = ()
 
 instance
     (
-    ) => MakeQueryParameters PostgresUniverse (SET_DEFAULT (COLUMN column) ty)
+    ) => MakeQueryParameters PostgresUniverse (SET (DEFAULT (COLUMN column)) ty)
   where
-    type QueryParametersType PostgresUniverse (SET_DEFAULT (COLUMN column) ty) = ty
+    type QueryParametersType PostgresUniverse (SET (DEFAULT (COLUMN column)) ty) = ty
     makeQueryParameters _ term = case term of
-        SET_DEFAULT _ x -> x
+        SET (DEFAULT _) x -> x
 
 instance
     (

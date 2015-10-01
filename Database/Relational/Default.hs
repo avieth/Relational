@@ -14,14 +14,17 @@ Portability : non-portable (GHC only)
 module Database.Relational.Default (
 
       Default(..)
+    , DEFAULT(..)
 
     ) where
 
 data Default term where
-    DEFAULT :: Default term
-    NOT_DEFAULT :: term -> Default term
+    DEFAULT_VALUE :: Default term
+    NOT_DEFAULT_VALUE :: term -> Default term
+
+data DEFAULT column = DEFAULT column
 
 instance Functor Default where
     fmap f term = case term of
-        DEFAULT -> DEFAULT
-        NOT_DEFAULT x -> NOT_DEFAULT (f x)
+        DEFAULT_VALUE -> DEFAULT_VALUE
+        NOT_DEFAULT_VALUE x -> NOT_DEFAULT_VALUE (f x)

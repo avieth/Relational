@@ -1,6 +1,6 @@
 {-|
-Module      : Database.Relational.SetDefault
-Description : Definition of SET_DEFAULT.
+Module      : Database.Relational.Set
+Description : Definition of SET.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
@@ -10,10 +10,10 @@ Portability : non-portable (GHC only)
 
 {-# LANGUAGE AutoDeriveTypeable #-}
 
-module Database.Relational.SetDefault (
+module Database.Relational.Set (
 
-      SET_DEFAULT(..)
+      SET(..)
 
     ) where
 
-data SET_DEFAULT column value = SET_DEFAULT column value
+data SET left right = SET left right
