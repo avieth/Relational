@@ -16,14 +16,14 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveGeneric #-}
 
-module Examples.Wine where
-
 import GHC.TypeLits
 import GHC.Generics
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
 import Control.Applicative (empty)
+import Control.Monad (when)
 import Data.Proxy
+import Data.Monoid
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Data.UUID.V4 (nextRandom)
@@ -63,6 +63,7 @@ import Servant
 import Servant.API
 import Network.Wai
 import Network.Wai.Handler.Warp hiding (Connection)
+import Options.Applicative
 
 type UUIDColumn = Column "uuid" PGUUID
 type WineUUIDColumn = Column "wine_uuid" PGUUID
@@ -378,7 +379,6 @@ instance FromJSON UUID where
 instance FromText UUID where
     fromText = UUID.fromText
 
-
 notesDataFromRow :: (PGUUID, PGZonedTimestamp, PGText) -> NotesData
 notesDataFromRow (uuid, date, text) = NotesData
     (pgUUID uuid)
@@ -509,10 +509,37 @@ server pool =
     :<|> serverDeleteWine pool
     :<|> serverDeleteNotes pool
 
+data ApplicationOptions = ApplicationOptions {
+      databaseHost :: String
+    , databasePort :: Int
+    , databaseUser :: String
+    , databaseName :: String
+    , httpPort :: Int
+    , setupDatabase :: Bool
+    }
+
+applicationOptionsParser :: Parser ApplicationOptions
+applicationOptionsParser = ApplicationOptions
+    <$> (strOption (long "dbhost"))
+    <*> (option auto (long "dbport"))
+    <*> (strOption (long "dbuser"))
+    <*> (strOption (long "dbname"))
+    <*> (option auto (long "httpport"))
+    <*> (switch (long "create-db"))
+
 main = do
-    pool <- createPool connectToDatabase closeConnection 2 2 2
+    opts <- execParser (info applicationOptionsParser mempty)
+    pool <- createPool (connectToDatabase opts) closeConnection 2 2 2
+    when (setupDatabase opts) $ withResource pool $ \connection -> do
+        runReaderT createWineDatabase connection
+        return ()
     let application = serve (Proxy :: Proxy WineAPI) (server pool)
-    run 8081 application
+    run (httpPort opts) application
   where
-    connectToDatabase = connect (defaultConnectInfo {connectUser="alex", connectDatabase="test"})
+    connectToDatabase opts = connect (defaultConnectInfo {
+          connectUser=(databaseUser opts)
+        , connectDatabase=(databaseName opts)
+        , connectHost=(databaseHost opts)
+        , connectPort=(fromIntegral (databasePort opts))
+        })
     closeConnection = close
