@@ -3,62 +3,89 @@
 
 name:                Relational
 version:             0.1.0.0
-synopsis:            Describe Haskell datatypes as relations
+-- synopsis:            
 -- description:         
-homepage:            https://github.com/avieth/Relational/
 license:             BSD3
 license-file:        LICENSE
 author:              Alexander Vieth
 maintainer:          aovieth@gmail.com
 -- copyright:           
-category:            Data
+category:            Database
 build-type:          Simple
--- extra-source-files:  
+extra-source-files:  README.md
 cabal-version:       >=1.10
 
-source-repository head
-  type:                 git
-  location:             https://github.com/avieth/Relational
-
 library
-
-  ghc-options:       
-
-  exposed-modules:     Database.Relational.Column
-                     , Database.Relational.Database
-                     , Database.Relational.ForeignKeyCycles
+  exposed-modules:     Database.Relational.Universe
+                     , Database.Relational.Into
+                     , Database.Relational.Insert
+                     , Database.Relational.Select
+                     , Database.Relational.Union
+                     , Database.Relational.ForeignKey
+                     , Database.Relational.FieldType
+                     , Database.Relational.PrimaryKey
+                     , Database.Relational.Sub
+                     , Database.Relational.Name
+                     , Database.Relational.Project
+                     , Database.Relational.NotNull
+                     , Database.Relational.Interpretation
                      , Database.Relational.Safe
+                     , Database.Relational.Delete
+                     , Database.Relational.Database
+                     , Database.Relational.Join
+                     , Database.Relational.Add
+                     , Database.Relational.Default
+                     , Database.Relational.Group
+                     , Database.Relational.Count
+                     , Database.Relational.RowType
                      , Database.Relational.Schema
+                     , Database.Relational.Constraint
+                     , Database.Relational.Limit
+                     , Database.Relational.Unique
+                     , Database.Relational.Alter
+                     , Database.Relational.StandardUniverse
+                     , Database.Relational.Create
+                     , Database.Relational.Intersect
+                     , Database.Relational.Value
+                     , Database.Relational.From
+                     , Database.Relational.Offset
+                     , Database.Relational.Update
+                     , Database.Relational.Values
+                     , Database.Relational.Set
+                     , Database.Relational.Restrict
+                     , Database.Relational.As
+                     , Database.Relational.Column
                      , Database.Relational.Table
-                     , Database.Relational.Universe
-                     , Types.Append
                      , Types.BooleanLogic
-                     , Types.Equal
-                     , Types.Every
                      , Types.Member
+                     , Types.Concat
+                     , Types.Every
                      , Types.Subset
+                     , Types.Append
+                     , Types.Equal
                      , Types.Unique
-
+                     , Types.Parametric
   -- other-modules:       
   other-extensions:    AutoDeriveTypeable
-                     , TypeFamilies
-                     , ScopedTypeVariables
-                     , MultiParamTypeClasses
-                     , FlexibleInstances
-                     , FlexibleContexts
-                     , GADTs
                      , DataKinds
-                     , PolyKinds
                      , KindSignatures
+                     , FlexibleInstances
+                     , TypeFamilies
+                     , PolyKinds
                      , TypeOperators
-                     , UndecidableInstances
+                     , MultiParamTypeClasses
+                     , FlexibleContexts
+                     , PatternSynonyms
                      , OverlappingInstances
+                     , ScopedTypeVariables
                      , ConstraintKinds
+                     , GADTs
+                     , UndecidableInstances
+                     , OverloadedStrings
                      , GeneralizedNewtypeDeriving
-                     , DeriveFunctor
+                     , PartialTypeSignatures
+                     , DeriveGeneric
                      , RankNTypes
-
-  build-depends:       base >=4.7 && <4.9
-
+  build-depends:       base >=4.8 && <4.9
   -- hs-source-dirs:      
   default-language:    Haskell2010

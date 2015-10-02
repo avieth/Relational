@@ -16,4 +16,4 @@ module Database.Relational.Set (
 
     ) where
 
-data SET left right = SET left right
+data SET left = SET left
