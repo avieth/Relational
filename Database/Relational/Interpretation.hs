@@ -77,11 +77,22 @@ class
   where
     type CreateDatabaseParameters database universe tables :: [*]
     type CreateDatabaseType database universe tables :: * -> *
-    createDatabase
+    createDatabaseTables
         :: DATABASE database
         -> universe
         -> Proxy tables
         -> CreateDatabaseType database universe tables ()
+
+createDatabase
+    :: forall database universe .
+       ( CreateDatabase database universe (DatabaseTables database) )
+    => DATABASE database
+    -> universe
+    -> CreateDatabaseType database universe (DatabaseTables database) ()
+createDatabase database universe = createDatabaseTables database universe proxy
+  where
+    proxy :: Proxy (DatabaseTables database)
+    proxy = Proxy
 
 class
     (

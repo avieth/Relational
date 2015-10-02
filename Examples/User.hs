@@ -1,6 +1,6 @@
 {-|
 Module      : Examples.User
-Description : Example of table of schema definition.
+Description : A simple example of the use of Relational with PostgreSQL.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
@@ -16,18 +16,19 @@ It's deliberately not normalized, to show the use of a foreign key.
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Examples.User where
 
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
+import Types.Parametric
 import Data.Proxy
 import Database.Relational.Database
 import Database.Relational.Table
 import Database.Relational.Schema
 import Database.Relational.Column
-import Database.Relational.ForeignKeyCycles
-import Database.Relational.Value.Database
+--import Database.Relational.ForeignKeyCycles
 import Database.Relational.Insert
 import Database.Relational.Into
 import Database.Relational.Delete
@@ -44,7 +45,9 @@ import Database.Relational.Join
 import Database.Relational.Count
 import Database.Relational.Limit
 import Database.Relational.Offset
-import Examples.PostgresUniverse
+import Database.Relational.Universe
+import Database.Relational.Interpretation
+import Examples.PostgreSQL
 import Database.PostgreSQL.Simple
 import Data.Functor.Identity
 import Data.UUID
@@ -53,144 +56,127 @@ import Data.UUID.V4 (nextRandom)
 type UUIDColumn = Column "uuid" PGUUID
 type UsernameColumn = Column "username" PGText
 
-type UserTable = Table "users" UserSchema
-type UserSchema
+type UsersTable = Table "users" UsersSchema
+type UsersSchema
     = Schema
-      UserColumns
-      UserPrimaryKey
-      UserForeignKey
-      UserUnique
-      UserNotNull
-      UserCheck
-      UserDeflt
-type UserColumns = '[ UUIDColumn ]
-type UserPrimaryKey = '[ UUIDColumn ]
-type UserForeignKey = '[]
--- This foreign key induces a cycle and is caught by our type program!!
---type UserForeignKey = '[ '( '[ '("uuid", "uuid") ] , "usernames") ]
-type UserUnique = '[ UUIDColumn ]
-type UserNotNull = '[ UUIDColumn ]
-type UserCheck = '[]
-type UserDeflt = '[]
+      UsersColumns
+      UsersPrimaryKey
+      UsersForeignKey
+      UsersUnique
+      UsersNotNull
+      UsersCheck
+      UsersDefault
+type UsersColumns = '[ UUIDColumn ]
+type UsersPrimaryKey = '( "pk_users", '[ UUIDColumn ] )
+type UsersForeignKey = '[]
+type UsersUnique = '[]
+type UsersNotNull = '[ UUIDColumn ]
+type UsersCheck = '[]
+type UsersDefault = '[]
 
-type UsernameTable = Table "usernames" UsernameSchema
-type UsernameSchema
+type UsernamesTable = Table "usernames" UsernamesSchema
+type UsernamesSchema
     = Schema
       UsernameColumns
-      UsernamePrimaryKey
-      UsernameForeignKey
-      UsernameUnique
-      UsernameNotNull
-      UsernameCheck
-      UsernameDeflt
+      UsernamesPrimaryKey
+      UsernamesForeignKeys
+      UsernamesUnique
+      UsernamesNotNull
+      UsernamesCheck
+      UsernamesDefault
 type UsernameColumns = '[ UUIDColumn, UsernameColumn ]
-type UsernamePrimaryKey = '[ UUIDColumn ]
-type UsernameForeignKey = '[ '( '[ '(UUIDColumn, UUIDColumn) ], TableName UserTable) ]
-type UsernameUnique = '[ UUIDColumn, UsernameColumn ]
-type UsernameNotNull = '[ UUIDColumn, UsernameColumn ]
-type UsernameCheck = '[]
-type UsernameDeflt = '[]
+type UsernamesPrimaryKey = '( "pk_usernames", '[ UUIDColumn ] )
+type UsernamesForeignKeys = '[
+      '( "fk_usernames_users", '[ UUIDColumn ], TableName UsersTable, '[ UUIDColumn ]  )
+    ]
+type UsernamesUnique = '[]
+type UsernamesNotNull = '[ UUIDColumn, UsernameColumn ]
+type UsernamesCheck = '[]
+type UsernamesDefault = '[ UsernameColumn ]
 
-type UserDatabase = Database "userdb" '[UserTable, UsernameTable]
+type UserDatabase = Database "userdb" '[UsersTable, UsernamesTable]
 
 wellFormed :: WellFormedDatabase UserDatabase => a
 wellFormed = undefined
 
-noCycles :: ForeignKeyCycles UserDatabase ~ '[] => a
-noCycles = undefined
+--noCycles :: ForeignKeyCycles UserDatabase ~ '[] => a
+--noCycles = undefined
 
-dbvalue :: DatabaseD UserDatabase PostgresUniverse (DatabaseTables UserDatabase)
-dbvalue = databaseD Proxy Proxy Proxy
+usersTable :: TABLE UsersTable
+usersTable = TABLE
 
-userTable :: TABLE UserTable
-userTable = TABLE
-
-usernamesTable :: TABLE UsernameTable
+usernamesTable :: TABLE UsernamesTable
 usernamesTable = TABLE
 
-uuidColumn :: Proxy '("uuid", PGUUID)
-uuidColumn = Proxy
+uuidColumn :: COLUMN UUIDColumn
+uuidColumn = COLUMN
 
-usernameColumn :: Proxy '("username", PGText)
-usernameColumn = Proxy
+usernameColumn :: COLUMN UsernameColumn
+usernameColumn = COLUMN
 
-userDatabase :: Proxy UserDatabase
-userDatabase = Proxy
+userDatabase :: DATABASE UserDatabase
+userDatabase = DATABASE
+
+createDB = createDatabase userDatabase PostgreSQLUniverse
+
+-- The type of createDatabase depends upon the form of the database type
+-- given. In our case, we have a default column for the second table, so
+-- we must supply the default value. The first table demands no values, so
+-- we just give ().
+runCreateDB = runParametric Proxy createDB () (PGText "anonymous coward")
 
 insertNew uuid = INSERT
-                 (INTO userTable)
+                 (INTO usersTable)
                  (VALUES (Identity (PGUUID uuid)))
 
-deleteAll = DELETE (FROM userTable)
+deleteAll = DELETE (FROM usersTable)
 
 deleteUuid uuid = DELETE
-                  (FROM userTable)
-                  `WHERE`
-                  (   (FIELD :: FIELD '(TableName UserTable, UUIDColumn))
-                      .==.
-                      (VALUE (PGUUID uuid))
+                  (FROM (usersTable
+                        `WHERE`
+                            ((FIELD :: FIELD '(TableName UsersTable, UUIDColumn))
+                            .==.
+                            (VALUE (PGUUID uuid)))
+                        )
                   )
 
 selectAllUsers = SELECT
-                 (      ((FIELD :: FIELD '("users", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
+                 (      (FIELD :: FIELD '("users", UUIDColumn))
                      |: P
                  )
-                 (FROM (userTable `AS` alias)
-                 )
-  where
-    uuid :: Proxy '("users", UUIDColumn, "uuid")
-    uuid = Proxy
-    alias :: Proxy '("users", '["uuid"])
-    alias = Proxy
+                 (FROM usersTable)
 
-selectAllUsernames = SELECT
-                     (      ((FIELD :: FIELD '("usernames", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
-                         |: ((FIELD :: FIELD '("usernames", UsernameColumn)) `AS` (Proxy :: Proxy "username"))
+selectAllUsernamess = SELECT
+                     (      (FIELD :: FIELD '("usernames", UUIDColumn))
+                         |: (FIELD :: FIELD '("usernames", UsernameColumn))
                          |: P
                      )
-                     (FROM (usernamesTable
-                            `AS`
-                            alias
-                           )
-                     )
-  where
-    uuid :: Proxy '("usernames", UUIDColumn, "uuid")
-    uuid = Proxy
-    username :: Proxy '("usernames", UsernameColumn, "username")
-    username = Proxy
-    alias :: Proxy '("usernames", '["uuid", "username"])
-    alias = Proxy
+                     (FROM usernamesTable)
 
 selectJoin = SELECT
-             (      ((FIELD :: FIELD '("users", UUIDColumn)) `AS` (Proxy :: Proxy "uuid"))
-                 |: ((FIELD :: FIELD '("usernames", UsernameColumn)) `AS` (Proxy :: Proxy "username"))
+             (      (FIELD :: FIELD '("users", UUIDColumn))
+                 |: (FIELD :: FIELD '("usernames", UsernameColumn))
                  |: P
              )
              (FROM (((selectAllUsers `AS` aliasLeft)
-                    `JOIN`
-                    (selectAllUsernames `AS` aliasRight))
-                    `ON`
-                    ((FIELD :: FIELD '("users", UUIDColumn))
-                     .==.
-                     (FIELD :: FIELD '("usernames", UUIDColumn))
-                    )
+                   `JOIN`
+                   (selectAllUsernamess `AS` aliasRight))
+                   `ON`
+                       ((FIELD :: FIELD '("users", UUIDColumn))
+                       .==.
+                       (FIELD :: FIELD '("usernames", UUIDColumn)))
                    )
              )
   where
-    uuid :: Proxy '("users", UUIDColumn, "uuid")
-    uuid = Proxy
-    username :: Proxy '("usernames", UsernameColumn, "username")
-    username = Proxy
     aliasLeft :: Proxy '("users", '["uuid"])
     aliasLeft = Proxy
     aliasRight :: Proxy '("usernames", '["uuid", "username"])
     aliasRight = Proxy
 
 selectCount = SELECT
-              (      (COUNT (FIELDS :: FIELDS '[ '("users", UUIDColumn) ]) `AS` (Proxy :: Proxy "count"))
+              (      (COUNT (COLUMN :: COLUMN UUIDColumn) `AS` (Proxy :: Proxy "count"))
                   |: P
               )
-              (FROM (userTable `AS` (Proxy :: Proxy '("users", '["uuid"])))
-              )
+              (FROM usersTable)
 
-selectUsersLimit proxyL proxyO = selectAllUsers `LIMIT` proxyL `OFFSET` proxyO
+selectUsersLimit limit offset = selectAllUsers `LIMIT` limit `OFFSET` offset
