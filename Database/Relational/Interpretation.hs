@@ -44,6 +44,7 @@ import Database.Relational.Sub
 import Database.Relational.Value
 import Database.Relational.Values
 import Database.Relational.Restrict
+import Database.Relational.Equal
 import Database.Relational.From
 import Database.Relational.As
 import Database.Relational.FieldType
@@ -66,6 +67,18 @@ import Database.Relational.Unique
 import Database.Relational.NotNull
 import Database.Relational.Default
 import Database.Relational.Set
+
+-- | A class indicating that some term can be interpreted inside a universe
+class
+    (
+    ) => RunRelational database universe term
+  where
+    type RunRelationalCodomain database universe term :: *
+    runRelational
+        :: DATABASE database
+        -> universe
+        -> term
+        -> RunRelationalCodomain database universe term
 
 -- TBD to what extent can we do this generically? The universe must only
 -- provide interpretation of the individual statements like CREATE TABLE
@@ -410,6 +423,7 @@ instance {-# OVERLAPS #-}
 
 -- To make a string of 0 or more ?, separated by columns and enclosed by
 -- parens, as we would use when doing an insertion.
+{-
 instance
     ( Monoid m
     , IsString m
@@ -421,6 +435,7 @@ instance
         , mconcat (intersperse (fromString ", ") (makeValuesClauses universe (Proxy :: Proxy (InverseRowType values))))
         , fromString ")"
         ]
+-}
 
 class MakeValuesClauses universe columns m where
     makeValuesClauses :: universe -> Proxy columns -> [m]
@@ -530,7 +545,6 @@ instance
             let queryString = mconcat [
                       (fromString "INSERT INTO ")
                     , makeQuery universe table
-                    , (fromString " VALUES ")
                     , makeQuery universe values
                     ]
             in  queryString
@@ -725,6 +739,7 @@ instance
                 , fromString (show (natVal proxyNat))
                 ]
 
+{-
 instance
     ( Monoid m
     , IsString m
@@ -738,7 +753,7 @@ instance
             , fromString " GROUP BY "
             , mconcat (intersperse (fromString ", ") (makeFieldsClauses universe (Proxy :: Proxy fields)))
             ]
-
+-}
 
 instance
     ( IsString m
@@ -746,6 +761,7 @@ instance
   where
     makeQuery universe (VALUE x) = fromString "?"
 
+{-
 instance
     ( Monoid m
     , IsString m
@@ -760,6 +776,7 @@ instance
         , fromString (symbolVal (Proxy :: Proxy columnName))
         , fromString "\""
         ]
+-}
 
 instance
     ( Monoid m
@@ -808,9 +825,9 @@ instance
     , IsString m
     , MakeQuery universe left m
     , MakeQuery universe right m
-    ) => MakeQuery universe (EQUAL left right) m
+    ) => MakeQuery universe (left :=: right) m
   where
-    makeQuery universe (EQUAL left right) = mconcat [
+    makeQuery universe (left :=: right) = mconcat [
           fromString "("
         , makeQuery universe left
         , fromString ") = ("
@@ -949,8 +966,10 @@ class TerminalRestriction universe term where
 instance TerminalRestriction universe (VALUE ty) where
     type TerminalRestrictionType universe (VALUE ty) = ty
 
+{-
 instance TerminalRestriction universe (FIELD '(tableName, column)) where
     type TerminalRestrictionType universe (FIELD '(tableName, column)) = ColumnType column
+-}
 
 -- Must be able to constrain a condition to make sense given the columns
 -- available.
@@ -994,6 +1013,7 @@ class RevealsFields universe term where
 -- | Anything which reveals types, when aliased, is restrictable.
 --   This handles VALUES clauses, which cannot be restricted unless they are
 --   aliased.
+{-
 instance
     ( RevealsTypes universe term
     ) => RevealsFields universe (AS term (alias :: (Symbol, [Symbol])))
@@ -1003,6 +1023,7 @@ instance
             (AliasAlias alias)
             (AliasColumnAliases alias)
             (RevealsTypesT universe term)
+-}
 
 -- | The fields use the table name and column names as the aliases (i.e. no
 --   aliasing takes place).
@@ -1137,13 +1158,16 @@ class ProjectComponent universe component where
     -- But must always produce precisely 1 thing.
     type ProjectComponentObservable universe component :: (Symbol, *)
 
+{-
 instance
     (
     ) => ProjectComponent universe (FIELD '(tableName, column))
   where
     type ProjectComponentObserved universe (FIELD '(tableName, column)) = '[ '(tableName, column) ]
     type ProjectComponentObservable universe (FIELD '(tableName, column)) = column
+-}
 
+{-
 instance
     ( ProjectComponent universe component
     ) => ProjectComponent universe (AS component (alias :: Symbol))
@@ -1152,7 +1176,7 @@ instance
         ProjectComponentObserved universe component
     type ProjectComponentObservable universe (AS component alias) =
         '(alias, ColumnType (ProjectComponentObservable universe component))
-
+-}
 
 class Projection universe term where
     -- Observed form of the projection; the things it attempts to pick.
@@ -1177,18 +1201,6 @@ instance
     type ProjectionObservable universe (component ': prj) =
            ProjectComponentObservable universe component
         ': ProjectionObservable universe prj
-
--- | A class indicating that some term can be interpreted inside a universe
-class
-    (
-    ) => RunRelational database universe term
-  where
-    type RunRelationalCodomain database universe term :: *
-    runRelational
-        :: DATABASE database
-        -> universe
-        -> term
-        -> RunRelationalCodomain database universe term
 
 
 type family ProjectionTypes (projectionTypes :: [(Symbol, *)]) :: [*] where

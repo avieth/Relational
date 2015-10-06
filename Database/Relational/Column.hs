@@ -15,6 +15,11 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Database.Relational.Column (
 
@@ -26,11 +31,14 @@ module Database.Relational.Column (
     , ColumnTypes
     , FIELD(..)
     , FIELDS(..)
+    , KnownColumnNames
+    , knownColumnNames
 
     ) where
 
-import GHC.TypeLits (Symbol)
+import GHC.TypeLits (Symbol, symbolVal, KnownSymbol)
 import Data.Proxy
+import Data.String
 
 -- A column is determined by a name and its type.
 
@@ -52,9 +60,23 @@ type family ColumnTypes (columns :: [(Symbol, *)]) :: [*] where
     ColumnTypes '[] = '[]
     ColumnTypes (c ': cs) = ColumnType c ': ColumnTypes cs
 
--- | A column qualified by a table name.
-data FIELD (field :: (Symbol, (Symbol, *))) where
-    FIELD :: FIELD '(tableName, column)
+-- | A column name qualified by a prefix name.
+data FIELD (field :: (Maybe Symbol, Symbol)) where
+    FIELD :: FIELD '(prefix, name)
 
-data FIELDS (fields :: [(Symbol, (Symbol, *))]) where
+data FIELDS (fields :: [(Symbol, Symbol)]) where
     FIELDS :: FIELDS fields
+
+class KnownColumnNames columns m where
+    knownColumnNames :: COLUMNS columns -> [m]
+instance KnownColumnNames '[] m where
+    knownColumnNames _ = []
+instance 
+    ( IsString m
+    , KnownSymbol (ColumnName column)
+    , KnownColumnNames columns m
+    ) => KnownColumnNames (column ': columns) m
+  where
+    knownColumnNames _ =
+          fromString (symbolVal (Proxy :: Proxy (ColumnName column)))
+        : knownColumnNames (COLUMNS :: COLUMNS columns)

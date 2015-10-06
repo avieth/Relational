@@ -291,6 +291,8 @@ insertNotes uuid wineUuid date notes =
 -- TODO accomodate incrementing, as in
 --     UPDATE stock SET stock = stock + 1 where stock.uuid = uuid
 updateWine :: UUID -> T.Text -> T.Text -> Maybe Int -> Maybe T.Text -> Int -> _
+updateWine = undefined
+{-
 updateWine uuid producer name vintage description stock =
     UPDATE
     (winesTable)
@@ -298,8 +300,11 @@ updateWine uuid producer name vintage description stock =
     (PGText producer, PGText name, fmap PGInteger vintage, fmap PGText description, PGInteger stock)
     `WHERE`
     ((FIELD :: FIELD '("wines", UUIDColumn)) .==. VALUE (PGUUID uuid))
+-}
 
 updateNotes :: UUID -> ZonedTime -> T.Text -> _
+updateNotes = undefined
+{-
 updateNotes uuid date notes =
     UPDATE
     (notesTable)
@@ -307,6 +312,7 @@ updateNotes uuid date notes =
     (PGZonedTimestamp date, PGText notes)
     `WHERE`
     ((FIELD :: FIELD '("notes", UUIDColumn)) .==. VALUE (PGUUID uuid))
+-}
 
 -- |
 -- == Delete
@@ -353,7 +359,7 @@ selectWineList limit offset =
 
 selectWine :: UUID -> _
 selectWine uuid =
-    (SELECT
+    SELECT
     (      (FIELD :: FIELD '("wines", ProducerColumn))
         |: (FIELD :: FIELD '("wines", NameColumn))
         |: (FIELD :: FIELD '("wines", VintageColumn))
@@ -361,9 +367,10 @@ selectWine uuid =
         |: (FIELD :: FIELD '("wines", StockColumn))
         |: P
     )
-    (FROM winesTable))
-    `WHERE`
-    ((FIELD :: FIELD '("wines", UUIDColumn)) .==. VALUE (PGUUID uuid))
+    (FROM (winesTable
+          `WHERE`
+          ((FIELD :: FIELD '("wines", UUIDColumn)) .==. VALUE (PGUUID uuid)))
+    )
 
 selectNotesList
     :: UUID -- Notes for this wine.
@@ -537,6 +544,8 @@ serverCreateNotes pool wineUuid notesCreationData = withResource pool $ \connect
 type UpdateWine = "wine" :> Capture "uuid" UUID :> ReqBody '[JSON] WineData :> Put '[JSON] ()
 
 serverUpdateWine :: ConnectionPool -> Server UpdateWine
+serverUpdateWine = undefined
+{-
 serverUpdateWine pool uuid wineData = withResource pool $ \connection -> do
     let producer = wineProducer wineData
     let name = wineName wineData
@@ -545,16 +554,19 @@ serverUpdateWine pool uuid wineData = withResource pool $ \connection -> do
     let stock = wineStock wineData
     lift $ runReaderT (runRelational wineDatabase PostgresUniverse (updateWine uuid producer name vintage description stock)) connection
     return ()
+-}
 
 type UpdateNotes = "notes" :> Capture "uuid" UUID :> ReqBody '[JSON] NotesCreationData :> Put '[JSON] ()
 
 serverUpdateNotes :: ConnectionPool -> Server UpdateNotes
+serverUpdateNotes = undefined
+{-
 serverUpdateNotes pool uuid notesCreationData = withResource pool $ \connection -> do
     let date = notesCreationDate notesCreationData
     let notes = notesCreationNotes notesCreationData
     lift $ runReaderT (runRelational wineDatabase PostgresUniverse (updateNotes uuid date notes)) connection
     return ()
-
+-}
 
 type DeleteWine = "wine" :> Capture "uuid" UUID :> Delete '[JSON] ()
 

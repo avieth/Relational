@@ -48,6 +48,7 @@ import Database.Relational.Offset
 import Database.Relational.Universe
 import Database.Relational.Interpretation
 import Examples.PostgreSQL
+import Examples.PostGIS
 import Database.PostgreSQL.Simple
 import Data.Functor.Identity
 import Data.UUID
@@ -117,7 +118,7 @@ usernameColumn = COLUMN
 userDatabase :: DATABASE UserDatabase
 userDatabase = DATABASE
 
-createDB = createDatabase userDatabase PostgreSQLUniverse
+createDB = createDatabase userDatabase postgreSQLUniverseNoExtensions
 
 -- The type of createDatabase depends upon the form of the database type
 -- given. In our case, we have a default column for the second table, so

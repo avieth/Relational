@@ -23,14 +23,6 @@ data OR left right = OR left right
 
 data NOT term = NOT term
 
-data EQUAL left right = EQUAL left right
-
-infixr 1 .==.
-(.==.) = EQUAL
-
-infixr 1 .<>.
-(.<>.) left right = NOT (left .==. right)
-
 data LESSTHAN left right = LESSTHAN left right
 
 infixr 1 .<.

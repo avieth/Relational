@@ -14,12 +14,14 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Database.Relational.Sub (
 
       SUB(..)
     , S(..)
-    , (\:)
+    , type (:\)
+    , pattern (:\)
 
     , SubColumns
 
@@ -34,8 +36,10 @@ data SUB left right where
 
 data S = S
 
-infixr 8 \:
-(\:) = SUB
+infixr 8 :\
+type (:\) = SUB
+
+pattern (:\) left right = SUB left right
 
 type family SubColumns sub where
     SubColumns S = '[]

@@ -14,12 +14,14 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Database.Relational.Project (
 
       PROJECT(..)
     , P(..)
-    , (|:)
+    , type (:|)
+    , pattern (:|)
 
     {-
     , ProjectColumns
@@ -41,10 +43,12 @@ import Database.Relational.Column
 data PROJECT left right where
     PROJECT :: left -> right -> PROJECT left right
 
+-- TODO get rid of this type, it's not needed.
 data P = P
 
-infixr 8 |:
-(|:) = PROJECT
+infixr 8 :|
+type (:|) = PROJECT
+pattern left :| right = PROJECT left right
 
 {-
 type family ProjectColumns project where
