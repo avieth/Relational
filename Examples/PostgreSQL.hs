@@ -1022,14 +1022,53 @@ instance
 instance
     ( Monoid m
     , IsString m
+    , KnownSymbol tableName
+    , KnownSymbols columnNames m
+    ) => PostgreSQLMakeQuery exts (TABLE_ALIAS tableName columnNames) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        TABLE_ALIAS -> mconcat [
+              fromString (symbolVal (Proxy :: Proxy tableName))
+            , fromString " ("
+            , mconcat . intersperse (fromString ", ") $ symbolVals (Proxy :: Proxy columnNames)
+            , fromString ")"
+            ]
+
+class KnownSymbols (symbols :: [Symbol]) m where
+    symbolVals :: Proxy symbols -> [m]
+instance KnownSymbols '[] m where
+    symbolVals = const []
+instance
+    ( IsString m
+    , KnownSymbol s
+    , KnownSymbols ss m
+    ) => KnownSymbols (s ': ss) m
+  where
+    symbolVals _ = fromString (symbolVal (Proxy :: Proxy s)) : symbolVals (Proxy :: Proxy ss)
+
+instance
+    (
+    ) => PostgreSQLQueryParameters exts (TABLE_ALIAS tableName columnNames)
+  where
+    type PostgreSQLQueryParametersType exts (TABLE_ALIAS tableName columnNames) = ()
+    postgreSQLQueryParameters _ _ = ()
+
+instance
+    ( Monoid m
+    , IsString m
     , PostgreSQLMakeQuery exts left m
     , PostgreSQLMakeQuery exts right m
     ) => PostgreSQLMakeQuery exts (AS left right) m
   where
     postgreSQLMakeQuery exts term = case term of
         AS left right -> mconcat [
-              postgreSQLMakeQuery exts left
-            , fromString " AS "
+              -- TBD is it OK to *always* wrap the aliased thing in parens?
+              -- We need it when aliasing a SELECT project from clause, and
+              -- it seems to work when aliasing project terms, but will it
+              -- fail somewhere else?
+              fromString "("
+            , postgreSQLMakeQuery exts left
+            , fromString ") AS "
             , postgreSQLMakeQuery exts right
             ]
 
@@ -1983,6 +2022,19 @@ instance
             (PostgreSQLProjectTypesType exts (PostgreSQLEnvironmentType exts selectable) project)
 
 instance
+    ( PostgreSQLEnvironment exts selectable
+    , env ~ PostgreSQLEnvironmentType exts selectable
+    , PostgreSQLProjectTypes exts env project
+    , PostgreSQLProjectNames exts env project
+    ) => PostgreSQLEnvironment exts (AS (SELECT project (FROM selectable)) (TABLE_ALIAS (tableName :: Symbol) (columnNames :: [Symbol])))
+  where
+    type PostgreSQLEnvironmentType exts (AS (SELECT project (FROM selectable)) (TABLE_ALIAS tableName columnNames)) =
+        PostgreSQLEnvironmentFromProjectNamesAndTypes
+            ('Just tableName)
+            (columnNames)
+            (PostgreSQLProjectTypesType exts (PostgreSQLEnvironmentType exts selectable) project)
+
+instance
     ( PostgreSQLEnvironment exts left
     , PostgreSQLEnvironment exts right
     ) => PostgreSQLEnvironment exts (ON (JOIN left right) restriction)
@@ -2034,11 +2086,21 @@ class
     type PostgreSQLProjectNamesType exts env ps :: [k]
 instance
     (
+    ) => PostgreSQLProjectNames exts env (FIELD '(prefix, suffix))
+  where
+    type PostgreSQLProjectNamesType exts env (FIELD '(prefix, suffix)) = '[suffix]
+instance
+    (
     ) => PostgreSQLProjectNames exts env ((FIELD '(prefix, suffix) :| ps))
   where
     type PostgreSQLProjectNamesType exts env ((FIELD '(prefix, suffix)) :| ps) =
            suffix
         ': PostgreSQLProjectNamesType exts env ps
+instance
+    (
+    ) => PostgreSQLProjectNames exts env (AS left name)
+  where
+    type PostgreSQLProjectNamesType exts env (AS left name) = '[name]
 instance
     (
     ) => PostgreSQLProjectNames exts env ((AS left name) :| ps)
@@ -2242,648 +2304,3 @@ instance
    runRelational _ universe term = do
        connection <- ask
        lift $ pgAction (Proxy :: Proxy (PostgreSQLQueryOutputType exts term)) connection (postgreSQLMakeQuery (Proxy :: Proxy exts) term) (postgreSQLQueryParameters (Proxy :: Proxy exts) term)
-
-
-{-
-instance {-# OVERLAPS #-}
-    ( Monoid m
-    , IsString m
-    , KnownSymbol name
-    , KnownSymbol (ColumnName column)
-    , KnownSymbol alias
-    , MakeProjectClauses (PostgreSQLUniverse exts) rest m
-    ) => MakeProjectClauses (PostgreSQLUniverse exts) (PROJECT (AS (FIELD '(name, column)) alias) rest) m where
-    makeProjectClauses universe _ = mconcat [
-          mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy name)), fromString "\""]
-        , fromString "."
-        , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy (ColumnName column))), fromString "\""]
-        , fromString " AS "
-        , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy alias)), fromString "\""]
-        ] : makeProjectClauses universe (Proxy :: Proxy rest)
-
-instance {-# OVERLAPS #-}
-    ( Monoid m
-    , IsString m
-    , KnownSymbol name
-    , KnownSymbol (ColumnName column)
-    , MakeProjectClauses (PostgreSQLUniverse exts) rest m
-    ) => MakeProjectClauses (PostgreSQLUniverse exts) (PROJECT (FIELD '(name, column)) rest) m where
-    makeProjectClauses universe _ = mconcat [
-          mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy name)), fromString "\""]
-        , fromString "."
-        , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy (ColumnName column))), fromString "\""]
-        ] : makeProjectClauses universe (Proxy :: Proxy rest)
-
-instance {-# OVERLAPS #-}
-    ( Monoid m
-    , IsString m
-    , KnownSymbol alias
-    , MakeProjectClauses (PostgreSQLUniverse exts) rest m
-    , MakeFieldsClauses (PostgreSQLUniverse exts) fields m
-    ) => MakeProjectClauses (PostgreSQLUniverse exts) (PROJECT (AS (COUNT (FIELDS fields)) alias) rest) m
-  where
-    makeProjectClauses universe _ = mconcat [
-          fromString "COUNT("
-        , mconcat (intersperse (fromString ", ") (makeFieldsClauses universe (Proxy :: Proxy fields)))
-        , fromString ") AS "
-        , mconcat [fromString "\"", fromString (symbolVal (Proxy :: Proxy alias)), fromString "\""]
-        ] : makeProjectClauses universe (Proxy :: Proxy rest)
-
-
-instance
-    (
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (TABLE table)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (TABLE table) = ()
-    makeQueryParameters _ _ = ()
-
-
-instance
-    (
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) ()
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) () = ()
-    makeQueryParameters _ () = ()
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) v
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (Identity v)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (Identity v) =
-        QueryParametersType (PostgreSQLUniverse exts) v
-    makeQueryParameters proxy (Identity v) = makeQueryParameters proxy v
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) v1
-    , MakeQueryParameters (PostgreSQLUniverse exts) v2
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (v1, v2)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (v1, v2) =
-           QueryParametersType (PostgreSQLUniverse exts) v1
-        :. QueryParametersType (PostgreSQLUniverse exts) v2
-    makeQueryParameters proxy (v1, v2) =
-           makeQueryParameters proxy v1
-        :. makeQueryParameters proxy v2
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) v1
-    , MakeQueryParameters (PostgreSQLUniverse exts) v2
-    , MakeQueryParameters (PostgreSQLUniverse exts) v3
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (v1, v2, v3)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (v1, v2, v3) =
-           QueryParametersType (PostgreSQLUniverse exts) v1
-        :. QueryParametersType (PostgreSQLUniverse exts) v2
-        :. QueryParametersType (PostgreSQLUniverse exts) v3
-    makeQueryParameters proxy (v1, v2, v3) =
-           makeQueryParameters proxy v1
-        :. makeQueryParameters proxy v2
-        :. makeQueryParameters proxy v3
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) x
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (CALL f x)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (CALL f x) =
-        QueryParametersType (PostgreSQLUniverse exts) x
-    makeQueryParameters proxy (CALL f x) = makeQueryParameters proxy x
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) inserting
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (INSERT (INTO (TABLE table)) inserting)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (INSERT (INTO (TABLE table)) inserting) =
-        QueryParametersType (PostgreSQLUniverse exts) inserting
-    makeQueryParameters proxy term = case term of
-        INSERT _ inserting -> makeQueryParameters proxy inserting
-
-instance
-    (
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (UPDATE (TABLE table) sub values)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (UPDATE (TABLE table) sub values) = values
-    makeQueryParameters _ term = case term of
-        UPDATE _  _ values -> values
-
-instance
-    (
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (DELETE (FROM (TABLE table)))
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (DELETE (FROM (TABLE table))) = ()
-    makeQueryParameters _ _ = ()
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) from
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (SELECT project (FROM from))
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (SELECT project (FROM from)) =
-        QueryParametersType (PostgreSQLUniverse exts) from
-    makeQueryParameters proxy term = case term of
-        SELECT _ (FROM from) -> makeQueryParameters proxy from
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (INTERSECT left right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (INTERSECT left right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        INTERSECT left right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (UNION left right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (UNION left right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        UNION left right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (JOIN left right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (JOIN left right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        JOIN left right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) term
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (AS term alias)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (AS term alias) =
-        QueryParametersType (PostgreSQLUniverse exts) term
-    makeQueryParameters proxy term = case term of
-        AS subterm alias -> makeQueryParameters proxy subterm
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) term
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (LIMIT term)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (LIMIT term)
-        = QueryParametersType (PostgreSQLUniverse exts) term
-    makeQueryParameters proxy term = case term of
-        LIMIT subterm _ -> makeQueryParameters proxy subterm
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) term
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (OFFSET term)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (OFFSET term)
-        = QueryParametersType (PostgreSQLUniverse exts) term
-    makeQueryParameters proxy term = case term of
-        OFFSET subterm _ -> makeQueryParameters proxy subterm
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (ON left right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (ON left right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        ON left right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) term
-    , MakeQueryParameters (PostgreSQLUniverse exts) restriction
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (WHERE term restriction)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (WHERE term restriction) =
-        QueryParametersType (PostgreSQLUniverse exts) term :. QueryParametersType (PostgreSQLUniverse exts) restriction
-    makeQueryParameters proxy term = case term of
-        WHERE term restriction ->
-            makeQueryParameters proxy term :. makeQueryParameters proxy restriction
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (AND left right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (AND left right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        AND left right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (OR left right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (OR left right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        OR left right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) term
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (NOT term)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (NOT term) =
-        QueryParametersType (PostgreSQLUniverse exts) term
-    makeQueryParameters proxy term = case term of
-        NOT term ->
-            makeQueryParameters proxy term
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (left :=: right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (left :=: right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        left :=: right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (LESSTHAN left right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (LESSTHAN left right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        LESSTHAN left right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    ( MakeQueryParameters (PostgreSQLUniverse exts) left
-    , MakeQueryParameters (PostgreSQLUniverse exts) right
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (GREATERTHAN left right)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (GREATERTHAN left right) =
-        QueryParametersType (PostgreSQLUniverse exts) left :. QueryParametersType (PostgreSQLUniverse exts) right
-    makeQueryParameters proxy term = case term of
-        GREATERTHAN left right ->
-            makeQueryParameters proxy left :. makeQueryParameters proxy right
-
-instance
-    (
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (VALUE value)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (VALUE value) = Identity value
-    makeQueryParameters _ term = case term of
-        VALUE x -> Identity x
-
-instance
-    (
-    ) => MakeQueryParameters (PostgreSQLUniverse exts) (FIELD column)
-  where
-    type QueryParametersType (PostgreSQLUniverse exts) (FIELD field) = ()
-    makeQueryParameters _ _ = ()
-
-
-instance WellFormedQuery database (PostgreSQLUniverse exts) term
-
--- | For delete, we require
---   - The table is in the database.
---   - 
---   Note: we wish to accept:
---
---       DELETE (FROM (TABLE table `WHERE` restriction))
---
---   whenever the restriction is consistent with the table.
---
---   It's difficult to anticipate the proper phrasing of this class.
---   I'm tempted to proceed like this:
---     there are 4 WellFormedQuery instances:
---
---         DELETE (FROM x)
---         INSERT (INTO x)
---         UPDATE x y
---         SELECT project (FROM x)
---
---     and then throw the meaningful conditions into the constraints for
---     these instances.
---
---     Oh yeah, we need entries for CREATE, ALTER.
-
-{-
-instance
-    ( WellFormedTableRestriction database universe clause
-    ) => WellFormedQuery database universe (DELETE (FROM clause))
-
--- THURSDAY
--- What we need: recognize disk table clauses and give a type with their form
--- (alias, column aliases).
--- BUT Oddly enough! PostgreSQL allows you to alias a disk table's column
--- names in a select, but NOT in a delete! WTF! This is exactly why we need
--- high flexiblity here, at the expense of code reuse.
-class WellFormedTableRestriction database universe clause
-instance
-    ( DatabaseContainsTable table
-    ) => WellFormedTableRestriction database universe (TABLE table)
-instance
-    (
-    ) => WellFormedTableRestriction database universe (AS (TABLE table) alias)
-instance
-    ( WellFormedTableRestriction database universe table
-    -- TODO restriction has references only within the table.
-    ) => WellFormedTableRestriction database universe (WHERE clause restriction)
-
-instance
-    ( WellFormedInsertClause database universe intoThis clause
-    ) => WellFormedQuery database universe (INSERT intoThis clause)
-
-instance
-    ( WellFormedUpdateClause database universe thing clause
-    ) => WellFormedQuery database universe (UPDATE thing clause)
-    
-
--- | For insert, we require:
---   - the table is in the database
---   - the values to insert match up in number and type with the table's
---     schema.
---     This should be handled by ONE class with instances for VALUES,
---     SELECT, queries with RETURNING, etc.
-instance
-    ( DatabaseContainsTable database table
-    ) => WellFormedQuery database universe (INSERT (INTO table) (VALUES values))
-instance
-    (
-    ) => WellFormedQuery database universe (INSERT (INTO table) (SELECT project (FROM selectable))
-
-instance
-    ( DatabaseContainsTable database table
-    -- TODO
-    ) => WellFormedQuery database universe (WHERE (DELETE (FROM table)) restriction)
-
-instance
-    (
-    -- TODO project only from the selecatble
-    ) => WellFormedQuery database universe (SELECT project (FROM selecatble))
-
-instance
-    (
--}
-
-instance
-    ( CompatibleRestriction (PostgreSQLUniverse exts) form left
-    , CompatibleRestriction (PostgreSQLUniverse exts) form right
-    ) => CompatibleRestriction (PostgreSQLUniverse exts) form (AND left right)
-
-instance
-    ( CompatibleRestriction (PostgreSQLUniverse exts) form left
-    , CompatibleRestriction (PostgreSQLUniverse exts) form right
-    ) => CompatibleRestriction (PostgreSQLUniverse exts) form (OR left right)
-
-instance
-    ( CompatibleRestriction (PostgreSQLUniverse exts) form term
-    ) => CompatibleRestriction (PostgreSQLUniverse exts) form (NOT term)
-
-instance
-    ( CompatibleRestriction (PostgreSQLUniverse exts) form left
-    , CompatibleRestriction (PostgreSQLUniverse exts) form right
-    ) => CompatibleRestriction (PostgreSQLUniverse exts) form (left :=: right)
-
-instance
-    ( CompatibleRestriction (PostgreSQLUniverse exts) form left
-    , CompatibleRestriction (PostgreSQLUniverse exts) form right
-    ) => CompatibleRestriction (PostgreSQLUniverse exts) form (LESSTHAN left right)
-
-instance
-    ( CompatibleRestriction (PostgreSQLUniverse exts) form left
-    , CompatibleRestriction (PostgreSQLUniverse exts) form right
-    ) => CompatibleRestriction (PostgreSQLUniverse exts) form (GREATERTHAN left right)
-
-instance
-    ( Member '(tableName, column) form ~ True
-    ) => CompatibleRestriction (PostgreSQLUniverse exts) form (FIELD '(tableName, column))
-
-
--- Plan for selection in the presence of joins, unions, intersections:
--- we need some way to get the "schema" of a relation, i.e. the columns (their
--- names, types, and alias) so that we can ensure it jives inside a composite.
---
---   -- For a SELECT it's simple: take the projection, drop all of its local
---   -- aliases and alias the whole thing using the AS clause.
---   RelSchema (SELECT projection (FROM (_)) `AS` alias) =
---       AliasProjection alias projection
---
---   Compatible projection (RelSchema x)
---   => Relation (SELECT projection FROM x `AS` alias)
---
--- The base selections:
---    SELECT projection (FROM (TABLE table) `AS` aliasWithColumnNames)
---    SELECT projection (FROM ((VALUES values) `AS` aliasWithColumnNames))
--- When dumped to queries, they are unparenthesized as a whole, but the values
--- variant has parens around the values clause.
--- Safety is granted by ensuring the aliases are good references to the TABLE
--- or VALUES and then that the projection includes only things from the alias.
---
--- The recursive selections:
---    SELECT projection (FROM x `AS` aliasWithColumnNames)
--- where x has a type giving its schema.
---
--- So I think what we want is a Selectable class, for the things which can
--- go inside the FROM. It has an associated type SelectableForm, as
--- determined by the aliases, and instances have constraints which ensure that
--- the aliases are sane.
---
--- A note on syntax:
---   SELECT projection ((FROM x) `AS` alias)
---   SELECT projection (FROM (x `AS` alias))
--- Which one should we use?
--- Second makes more sense in my opinion.
---
--- A question to consider: how ensure we have at most one limit and offset per
--- select, and that they always come above the select? Hm, no, limits and
--- offsets can go after a select, and be nested in another select, but we
--- simply must ensure that there's AT MOST one limit and one offset per
--- selecti. How? A type function indicator which reveals limited clauses?
-
-type family ProjectTypes project :: [*] where
-    ProjectTypes P = '[]
-    ProjectTypes (PROJECT (AS (FIELD '(tableName, col)) alias) rest) = ColumnType col ': ProjectTypes rest
-    ProjectTypes (PROJECT (COUNT (FIELDS columns)) rest) = PGInteger ': ProjectTypes rest
-
--- | Given a SelectableForm and a projection from it, compute the row type,
---   i.e. the thing you will actually get back if you run a select with this
---   projection on this selectable.
-type family SelectableRowType project (selectableForm :: [(Symbol, (Symbol, *))]) :: [*] where
-    SelectableRowType P form = '[]
-    SelectableRowType (PROJECT (AS (FIELD '(tableName, col)) alias) right) form = SelectableLookup '(tableName, col, alias) form ': SelectableRowType right form
-    SelectableRowType (PROJECT (FIELD '(tableName, col)) right) form = SelectableLookup '(tableName, col, ColumnName col) form ': SelectableRowType right form
-    SelectableRowType (PROJECT (AS (COUNT (FIELDS cols)) alias) right) form = PGInteger ': SelectableRowType right form
-
--- | Helper for SelectableRowType. Looks up the matching part of the
---   selectable form, according to alias prefix and column alias (in fact,
---   it requires the types to match as well).
-type family SelectableLookup (p :: (Symbol, (Symbol, *), Symbol)) (selectableForm :: [(Symbol, (Symbol, *))]) :: * where
-    SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, ty)) ': rest ) = ty
-    -- This clause handles the case in which a field can be null.
-    SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(alias, '(columnAlias, Maybe ty)) ': rest ) = Maybe ty
-    SelectableLookup '(alias, '(columnAlias, ty), newAlias) ( '(saila, '(sailAnmuloc, yt)) ': rest ) = SelectableLookup '(alias, '(columnAlias, ty), newAlias) rest
-
-type family SelectableTypes (p :: [(Symbol, (Symbol, *))]) :: [*] where
-    SelectableTypes '[] = '[]
-    SelectableTypes ( '(alias, '(columnAlias, ty)) ': rest ) = ty ': SelectableTypes rest
-
--- | Something FROM which we can select.
---   It indicates the schema that will come out: a list of fields (names and
---   types) with their aliases (prefix before a dot).
---
---   Base cases:
---     - selecting from a disk table (TABLE).
---     - selecting from a literal values (VALUES).
---
---   Recursive cases:
---     - selecting from any Selectable.
---     - selecting form any intersection of Selectables.
---     - selecting from any union of Selectables.
---     - selecting from any join of Selectables.
---     - selecting from a restricted selectable (WHERE).
---
---   TODO FIXME take another look at this class. Is it necessary? Can't we
---   make it with just RevealsFields?
-class Selectable term where
-    -- SelectableForm gives the prefix alias, column alias, and read field
-    -- type. Do not confuse it with the column type! The read field type is
-    -- what you'll actually get out, not necessarily what is listed in some
-    -- schema.
-    type SelectableForm term :: [(Symbol, (Symbol, *))]
-
--- | The alias includes a table alias and aliases for every column, so we
---   can just use that as the SelectableForm, after computing the read
---   field type from the table's schema.
-instance
-    (
-    ) => Selectable (AS (TABLE table) (alias :: (Symbol, [Symbol])))
-  where
-    type SelectableForm (AS (TABLE table) alias) =
-        TagFieldsUsingAlias
-            (AliasAlias alias)
-            (AliasColumnAliases alias)
-            (FieldTypes READ (TableSchema table) (SchemaColumns (TableSchema table)))
-
-instance
-    (
-    ) => Selectable (TABLE table)
-  where
-    type SelectableForm (TABLE table) =
-        TagFieldsUsingAlias
-            (TableName table)
-            (ColumnNames (SchemaColumns (TableSchema table)))
-            (FieldTypes READ (TableSchema table) (SchemaColumns (TableSchema table)))
-
--- | Here, the type of @values@ is determined by the alias columns, and the
---   @SelectableForm@ are determined by both of them.
---   In order for this to make sense, the @values@ must be a tuple (or Identity)
---   of appropriate length, then its components will be used to determine the
---   column types.
-instance
-    (
-    ) => Selectable (AS (VALUES values) (alias :: (Symbol, [Symbol])))
-  where
-    type SelectableForm (AS (VALUES values) alias) =
-        TagFieldsUsingAlias
-            (AliasAlias alias)
-            (AliasColumnAliases alias)
-            (InverseRowType values)
-
--- | For intersections, we demand that left and right are PGSelections (not
---   Selectable) and with compatible forms (types coincide, but aliases may
---   differ).
---
---   This will allows us to interpret
---       SELECT
---       project
---       FROM (INTERSECT
---            (SELECT .. )
---            (SELECT .. )
---            `AS`
---            alias
---
---
---   OR!!! We could just make a more elaborate pattern here
---
---      AS (INTERSECT (SELECT projectLeft (FROM selectable))
---                    (SELECT projectRight (FROM selectable))
---         )
---      alias
---
---   This obviates the need for PGSelection class.
-instance
-    ( Selectable selectableLeft
-    , Selectable selectableRight
-    ) => Selectable (AS (INTERSECT (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) (alias :: (Symbol, [Symbol])))
-  where
-    -- This should be the types determined by left and right projections,
-    -- aliased by the AS alias here.
-    type SelectableForm (AS (INTERSECT (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) alias) =
-        TagFieldsUsingAlias
-            (AliasAlias alias)
-            (AliasColumnAliases alias)
-            -- We can use projectLeft because
-            -- ProjectTypes projectLeft ~ ProjectTypes projectRight
-            (ProjectTypes projectLeft)
-
-instance
-    ( Selectable selectableLeft
-    , Selectable selectableRight
-    ) => Selectable (AS (UNION (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) (alias :: (Symbol, [Symbol])))
-  where
-    -- This should be the types determined by left and right projections,
-    -- aliased by the AS alias here.
-    type SelectableForm (AS (UNION (SELECT projectLeft (FROM selectableLeft)) (SELECT projectRight (FROM selectableRight))) alias) =
-        TagFieldsUsingAlias
-            (AliasAlias alias)
-            (AliasColumnAliases alias)
-            -- We can use projectLeft because
-            -- ProjectTypes projectLeft ~ ProjectTypes projectRight
-            (ProjectTypes projectLeft)
-
-instance
-    ( Selectable selectableLeft
-    , Selectable selectableRight
-    ) => Selectable (ON (JOIN (AS (SELECT projectLeft (FROM selectableLeft)) (aliasLeft :: (Symbol, [Symbol]))) (AS (SELECT projectRight (FROM selectableRight)) (aliasRight :: (Symbol, [Symbol])))) joinCondition)
-  where
-    -- The instance constraints guarantee that left and right aliases are
-    -- distinct. With this assumption, we can simply alias each project
-    -- with its alias, and concatenate them, making every member of each
-    -- table available in the form of the join.
-    type SelectableForm (ON (JOIN (AS (SELECT projectLeft (FROM selectableLeft)) aliasLeft) (AS (SELECT projectRight (FROM selectableRight)) aliasRight)) joinCondition) =
-        Append
-            (TagFieldsUsingAlias
-                (AliasAlias aliasLeft)
-                (AliasColumnAliases aliasLeft)
-                (ProjectTypes projectLeft)
-            )
-            (TagFieldsUsingAlias
-                (AliasAlias aliasRight)
-                (AliasColumnAliases aliasRight)
-                (ProjectTypes projectRight)
-            )
-
--- | We can restrict the thing FROM which we select. This is intuitive to the
---   authour: restrict *then* project, not the other way around, since
---   conceptually some fields may go out of scope after projection. For example,
---   if we project the first column then restrict, we ought to only have the
---   first column in scope, and so we cannot use the second column in the
---   restriction.
-instance
-    ( Selectable selectableTerm
-    ) => Selectable (WHERE selectableTerm restriction)
-  where
-    type SelectableForm (WHERE selectableTerm restriction) = SelectableForm selectableTerm
-
-instance
-    (
-    ) => ProjectComponent (PostgreSQLUniverse exts) (COUNT (FIELD field))
-  where
-    type ProjectComponentObserved (PostgreSQLUniverse exts) (COUNT (FIELD field)) = '[field]
-    -- Notice that we choose "count" as the name.
-    -- That's in-tune with what PostgreSQL does.
-    type ProjectComponentObservable (PostgreSQLUniverse exts) (COUNT (FIELD field)) = '("count", PGInteger)
--}

@@ -28,13 +28,13 @@ import Database.Relational.Database
 import Database.Relational.Table
 import Database.Relational.Schema
 import Database.Relational.Column
---import Database.Relational.ForeignKeyCycles
 import Database.Relational.Insert
 import Database.Relational.Into
 import Database.Relational.Delete
 import Database.Relational.Values
 import Database.Relational.Value
 import Database.Relational.Restrict
+import Database.Relational.Equal
 import Database.Relational.From
 import Database.Relational.Select
 import Database.Relational.Project
@@ -43,6 +43,7 @@ import Database.Relational.Intersect
 import Database.Relational.Union
 import Database.Relational.Join
 import Database.Relational.Count
+import Database.Relational.Name
 import Database.Relational.Limit
 import Database.Relational.Offset
 import Database.Relational.Universe
@@ -100,9 +101,6 @@ type UserDatabase = Database "userdb" '[UsersTable, UsernamesTable]
 wellFormed :: WellFormedDatabase UserDatabase => a
 wellFormed = undefined
 
---noCycles :: ForeignKeyCycles UserDatabase ~ '[] => a
---noCycles = undefined
-
 usersTable :: TABLE UsersTable
 usersTable = TABLE
 
@@ -118,7 +116,7 @@ usernameColumn = COLUMN
 userDatabase :: DATABASE UserDatabase
 userDatabase = DATABASE
 
-createDB = createDatabase userDatabase postgreSQLUniverseNoExtensions
+createDB = createDatabase userDatabase postgreSQLUniverse
 
 -- The type of createDatabase depends upon the form of the database type
 -- given. In our case, we have a default column for the second table, so
@@ -126,57 +124,62 @@ createDB = createDatabase userDatabase postgreSQLUniverseNoExtensions
 -- we just give ().
 runCreateDB = runParametric Proxy createDB () (PGText "anonymous coward")
 
-insertNew uuid = INSERT
-                 (INTO usersTable)
-                 (VALUES (Identity (PGUUID uuid)))
+insertUser uuid =
+    INSERT
+    (INTO usersTable)
+    (VALUES (PGUUID uuid))
+
+insertUsername uuid username =
+    INSERT
+    (INTO usernamesTable)
+    (VALUES ( PGUUID uuid
+            , PGText username
+            )
+    )
 
 deleteAll = DELETE (FROM usersTable)
 
 deleteUuid uuid = DELETE
                   (FROM (usersTable
                         `WHERE`
-                            ((FIELD :: FIELD '(TableName UsersTable, UUIDColumn))
-                            .==.
-                            (VALUE (PGUUID uuid)))
+                            ((FIELD :: FIELD '( 'Nothing, "uuid" ))
+                            :=:
+                            (PGUUID uuid))
                         )
                   )
 
 selectAllUsers = SELECT
-                 (      (FIELD :: FIELD '("users", UUIDColumn))
-                     |: P
+                 (      (FIELD :: FIELD '( 'Just "users", "uuid" ))
                  )
                  (FROM usersTable)
 
 selectAllUsernamess = SELECT
-                     (      (FIELD :: FIELD '("usernames", UUIDColumn))
-                         |: (FIELD :: FIELD '("usernames", UsernameColumn))
-                         |: P
+                     (      (FIELD :: FIELD '( 'Just "usernames", "uuid" ))
+                         :| (FIELD :: FIELD '( 'Just "usernames", "username" ))
                      )
                      (FROM usernamesTable)
 
 selectJoin = SELECT
-             (      (FIELD :: FIELD '("users", UUIDColumn))
-                 |: (FIELD :: FIELD '("usernames", UsernameColumn))
-                 |: P
+             (      (FIELD :: FIELD '( 'Just "users", "uuid" ))
+                 :| (FIELD :: FIELD '( 'Just "usernames", "username" ))
              )
              (FROM (((selectAllUsers `AS` aliasLeft)
                    `JOIN`
                    (selectAllUsernamess `AS` aliasRight))
                    `ON`
-                       ((FIELD :: FIELD '("users", UUIDColumn))
-                       .==.
-                       (FIELD :: FIELD '("usernames", UUIDColumn)))
+                       ((FIELD :: FIELD '( 'Just "users", "uuid" ))
+                       :=:
+                       (FIELD :: FIELD '( 'Just "usernames", "uuid" )))
                    )
              )
   where
-    aliasLeft :: Proxy '("users", '["uuid"])
-    aliasLeft = Proxy
-    aliasRight :: Proxy '("usernames", '["uuid", "username"])
-    aliasRight = Proxy
+    aliasLeft :: TABLE_ALIAS "users" '["uuid"]
+    aliasLeft = TABLE_ALIAS
+    aliasRight :: TABLE_ALIAS "usernames" '["uuid", "username"]
+    aliasRight = TABLE_ALIAS
 
 selectCount = SELECT
-              (      (COUNT (COLUMN :: COLUMN UUIDColumn) `AS` (Proxy :: Proxy "count"))
-                  |: P
+              (      (COUNT (COLUMN :: COLUMN UUIDColumn) `AS` (NAME :: NAME "count"))
               )
               (FROM usersTable)
 

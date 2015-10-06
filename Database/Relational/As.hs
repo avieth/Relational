@@ -16,6 +16,7 @@ Portability : non-portable (GHC only)
 module Database.Relational.As (
 
       AS(..)
+    , TABLE_ALIAS(..)
 
     ) where
 
@@ -23,3 +24,8 @@ import Data.Proxy
 
 data AS term alias where
     AS :: term -> alias -> AS term alias
+
+-- | Good for giving a complete table alias: a name for the table and a name
+--   for each of its columns.
+data TABLE_ALIAS tableName columnNames where
+    TABLE_ALIAS :: TABLE_ALIAS tableName columnNames
