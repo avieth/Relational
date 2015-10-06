@@ -911,7 +911,7 @@ instance
         FOREIGN_KEY localColumns NAME foreignColumns -> mconcat [
               fromString "FOREIGN KEY ("
             , mconcat (intersperse (fromString ", ") (knownColumnNames localColumns))
-            , fromString ") REFERENCES ("
+            , fromString ") REFERENCES "
             , fromString (symbolVal (Proxy :: Proxy foreignTableName))
             , fromString "("
             , mconcat (intersperse (fromString ", ") (knownColumnNames foreignColumns))
@@ -972,10 +972,11 @@ instance
     (
     ) => PostgreSQLQueryParameters exts (SET (DEFAULT ty))
   where
-    type PostgreSQLQueryParametersType exts (SET (DEFAULT ty)) = ty
+    type PostgreSQLQueryParametersType exts (SET (DEFAULT ty)) = Only ty
     postgreSQLQueryParameters _ term = case term of
-        SET (DEFAULT x) -> x
+        SET (DEFAULT x) -> Only x
 
+-- | A VALUES is always followed by parens.
 instance
     ( Monoid m
     , IsString m
@@ -984,8 +985,9 @@ instance
   where
     postgreSQLMakeQuery exts term = case term of
         VALUES values -> mconcat [
-              fromString "VALUES "
+              fromString "VALUES ("
             , postgreSQLMakeQuery exts values
+            , fromString ")"
             ]
 
 instance
@@ -1053,11 +1055,9 @@ instance
   where
     postgreSQLMakeQuery exts term = case term of
         (v1, v2) -> mconcat [
-              fromString "("
-            , postgreSQLMakeQuery exts v1
+              postgreSQLMakeQuery exts v1
             , fromString ", "
             , postgreSQLMakeQuery exts v2
-            , fromString ")"
             ]
 
 instance
@@ -1083,13 +1083,11 @@ instance
   where
     postgreSQLMakeQuery exts term = case term of
         (v1, v2, v3) -> mconcat [
-              fromString "("
-            , postgreSQLMakeQuery exts v1
+              postgreSQLMakeQuery exts v1
             , fromString ", "
             , postgreSQLMakeQuery exts v2
             , fromString ", "
             , postgreSQLMakeQuery exts v3
-            , fromString ")"
             ]
 
 instance
@@ -1119,15 +1117,13 @@ instance
   where
     postgreSQLMakeQuery exts term = case term of
         (v1, v2, v3, v4) -> mconcat [
-              fromString "("
-            , postgreSQLMakeQuery exts v1
+              postgreSQLMakeQuery exts v1
             , fromString ", "
             , postgreSQLMakeQuery exts v2
             , fromString ", "
             , postgreSQLMakeQuery exts v3
             , fromString ", "
             , postgreSQLMakeQuery exts v4
-            , fromString ")"
             ]
 
 instance
