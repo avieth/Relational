@@ -22,6 +22,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Database.Relational.Interpretation where
 
@@ -43,8 +44,13 @@ import Database.Relational.Project
 import Database.Relational.Sub
 import Database.Relational.Value
 import Database.Relational.Values
-import Database.Relational.Restrict
+import Database.Relational.Where
+import Database.Relational.And
+import Database.Relational.Or
+import Database.Relational.Not
 import Database.Relational.Equal
+import Database.Relational.LessThan
+import Database.Relational.GreaterThan
 import Database.Relational.From
 import Database.Relational.As
 import Database.Relational.FieldType
@@ -825,7 +831,7 @@ instance
     , IsString m
     , MakeQuery universe left m
     , MakeQuery universe right m
-    ) => MakeQuery universe (left :=: right) m
+    ) => MakeQuery universe (EQUAL left right) m
   where
     makeQuery universe (left :=: right) = mconcat [
           fromString "("
@@ -840,9 +846,9 @@ instance
     , IsString m
     , MakeQuery universe left m
     , MakeQuery universe right m
-    ) => MakeQuery universe (LESSTHAN left right) m
+    ) => MakeQuery universe (left :<: right) m
   where
-    makeQuery universe (LESSTHAN left right) = mconcat [
+    makeQuery universe (left :<: right) = mconcat [
           fromString "("
         , makeQuery universe left
         , fromString ") < ("
@@ -855,9 +861,9 @@ instance
     , IsString m
     , MakeQuery universe left m
     , MakeQuery universe right m
-    ) => MakeQuery universe (GREATERTHAN left right) m
+    ) => MakeQuery universe (left :>: right) m
   where
-    makeQuery universe (GREATERTHAN left right) = mconcat [
+    makeQuery universe (left :>: right) = mconcat [
           fromString "("
         , makeQuery universe left
         , fromString ") > ("

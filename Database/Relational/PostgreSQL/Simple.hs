@@ -1,11 +1,38 @@
 {-|
-Module      : Examples.PostgreSQL
+Module      : Database.Relational.PostgreSQL.Simple
 Description : A PostgreSQL driver using Relational types.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
 Stability   : experimental
 Portability : non-portable (GHC only)
+
+This module provides a PostgreSQL interpreter (or driver if you will) for
+Relational terms. It's built by describing well-formed Relational terms via
+instances of typeclasses. For example, well-formed PostgreSQL queries look
+roughly like this:
+
+    query = SELECT select_list FROM table_expression [sort_expression]
+          | query1 INTERSECT query2
+          | query1 UNION query2
+          | query1 EXCEPT query2
+
+This would be expressed like so:
+
+    class Query t
+    instance Query (SELECT select_list FROM table_expression [sort_expression])
+    instance (Query query1, Query query2) => Query (query1 INTERSECT query2)
+    instance (Query query1, Query query2) => Query (query1 UNION query2)
+    instance (Query query1, Query query2) => Query (query1 EXCEPT query2)
+
+In practice, we'll have class methods and associated types as well, so that
+we can generate the terms needed to actually query a running PostgreSQL program.
+
+Currently, this hypthetical Query class is split: we have PostgreSQLMakeQuery
+for generting query strings, and PostgreSQLQueryParameters for generating
+the values to substitute for ? wildcards. For selections, we also have
+supporting classes to determine which fields are in scope.
+
 -}
 
 {-# LANGUAGE AutoDeriveTypeable #-}
@@ -25,14 +52,14 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PatternSynonyms #-}
 
-module Examples.PostgreSQL where
+module Database.Relational.PostgreSQL.Simple where
 
 import GHC.TypeLits
+import GHC.Exts (Constraint)
 import Control.Monad (forM_)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.Identity
-import Data.Constraint
 import Data.Functor.Identity
 import Data.Proxy
 import Data.String (fromString, IsString)
@@ -59,8 +86,15 @@ import Database.Relational.Project
 import Database.Relational.Sub
 import Database.Relational.Value
 import Database.Relational.Values
-import Database.Relational.Restrict
+import Database.Relational.Where
+import Database.Relational.And
+import Database.Relational.Or
+import Database.Relational.Not
+import Database.Relational.Is
+import Database.Relational.In
 import Database.Relational.Equal
+import Database.Relational.LessThan
+import Database.Relational.GreaterThan
 import Database.Relational.From
 import Database.Relational.As
 import Database.Relational.FieldType
@@ -97,6 +131,7 @@ import qualified Data.Text.Lazy.Builder as BT
 import qualified Data.ByteString as BS
 import Data.Int
 import Data.Time.LocalTime
+import Data.Aeson.Types
 
 -- |
 -- = Types
@@ -419,6 +454,23 @@ instance IsString m => PostgreSQLMakeQuery exts PGZonedTimestamp m where
 
 instance PostgreSQLQueryParameters exts PGZonedTimestamp where
     type PostgreSQLQueryParametersType exts PGZonedTimestamp = Only PGZonedTimestamp
+    postgreSQLQueryParameters _ = Only
+
+newtype PGJSON = PGJSON {
+      pgJson :: Data.Aeson.Types.Value
+    } deriving (Show, FromField, ToField)
+
+instance PostgreSQLEntity PGJSON where
+    type PostgreSQLEntityExtension PGJSON = 'Nothing
+
+instance PostgreSQLType PGJSON where
+    postgreSQLTypeId _ = "json"
+
+instance IsString m => PostgreSQLMakeQuery exts PGJSON m where
+    postgreSQLMakeQuery _ _ = fromString "?"
+
+instance PostgreSQLQueryParameters exts PGJSON where
+    type PostgreSQLQueryParametersType exts PGJSON = Only PGJSON
     postgreSQLQueryParameters _ = Only
 
 -- Some examples of PostgreSQL function definitions.
@@ -910,13 +962,16 @@ instance
     postgreSQLMakeQuery exts term = case term of
         FOREIGN_KEY localColumns NAME foreignColumns -> mconcat [
               fromString "FOREIGN KEY ("
-            , mconcat (intersperse (fromString ", ") (knownColumnNames localColumns))
-            , fromString ") REFERENCES "
+            , mconcat (intersperse (fromString ", ") (fmap quoteIt (knownColumnNames localColumns)))
+            , fromString ") REFERENCES \""
             , fromString (symbolVal (Proxy :: Proxy foreignTableName))
-            , fromString "("
-            , mconcat (intersperse (fromString ", ") (knownColumnNames foreignColumns))
+            , fromString "\" ("
+            , mconcat (intersperse (fromString ", ") (fmap quoteIt (knownColumnNames foreignColumns)))
             , fromString ")"
             ]
+          where
+            quoteIt :: (Monoid m, IsString m) => m -> m
+            quoteIt x = mconcat [fromString "\"", x, fromString "\""]
 
 instance
     (

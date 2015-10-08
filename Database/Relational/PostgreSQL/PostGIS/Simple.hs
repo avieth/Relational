@@ -1,6 +1,6 @@
 {-|
-Module      : 
-Description : 
+Module      : Database.Relational.PostgreSQL.PostGIS.Simple
+Description : PostGIS extension for PostgreSQL simple driver.
 Copyright   : (c) Alexander Vieth, 2015
 Licence     : BSD3
 Maintainer  : aovieth@gmail.com
@@ -23,7 +23,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
-module Examples.PostGIS where
+module Database.Relational.PostgreSQL.PostGIS.Simple where
 
 import Data.Proxy
 import Data.String (IsString, fromString)
@@ -32,7 +32,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.Class (lift)
-import Examples.PostgreSQL
+import Database.Relational.PostgreSQL.Simple
 import Database.Relational.Universe
 import Database.Relational.Interpretation
 import Database.PostgreSQL.Simple

@@ -52,10 +52,21 @@ library
                      , Database.Relational.Update
                      , Database.Relational.Values
                      , Database.Relational.Set
-                     , Database.Relational.Restrict
+                     , Database.Relational.Where
                      , Database.Relational.As
                      , Database.Relational.Column
                      , Database.Relational.Table
+                     , Database.Relational.Order
+                     , Database.Relational.And
+                     , Database.Relational.Or
+                     , Database.Relational.Not
+                     , Database.Relational.Null
+                     , Database.Relational.In
+                     , Database.Relational.Is
+                     , Database.Relational.Equal
+                     , Database.Relational.GreaterThan
+                     , Database.Relational.LessThan
+                     , Database.Relational
                      , Types.BooleanLogic
                      , Types.Member
                      , Types.Concat
@@ -65,6 +76,11 @@ library
                      , Types.Equal
                      , Types.Unique
                      , Types.Parametric
+                     , Types.SomeFunctorial
+
+                     -- TODO move these to their own packages.
+                     , Database.Relational.PostgreSQL.Simple
+                     , Database.Relational.PostgreSQL.PostGIS.Simple
   -- other-modules:       
   other-extensions:    AutoDeriveTypeable
                      , DataKinds
@@ -87,5 +103,18 @@ library
                      , DeriveGeneric
                      , RankNTypes
   build-depends:       base >=4.8 && <4.9
+
+                     -- TODO these are for postgresql drivers; remove them
+                     -- when those drivers get their own packages.
+                     , time
+                     , bytestring
+                     , text
+                     , uuid
+                     , postgresql-simple
+                     , transformers
+                     , attoparsec
+                     , aeson
+
+  
   -- hs-source-dirs:      
   default-language:    Haskell2010
