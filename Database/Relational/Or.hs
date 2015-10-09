@@ -20,5 +20,5 @@ module Database.Relational.Or (
 
 data OR left right = OR left right
 
-infixl 1 :||:
+infixr 2 :||:
 pattern left :||: right = OR left right

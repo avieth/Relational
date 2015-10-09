@@ -155,13 +155,13 @@ selectAllUsers = SELECT
 
 selectAllUsernamess = SELECT
                      (      (FIELD :: FIELD '( 'Just "usernames", "uuid" ))
-                         :| (FIELD :: FIELD '( 'Just "usernames", "username" ))
+                         :|: (FIELD :: FIELD '( 'Just "usernames", "username" ))
                      )
                      (FROM usernamesTable)
 
 selectJoin = SELECT
              (      (FIELD :: FIELD '( 'Just "users", "uuid" ))
-                 :| (FIELD :: FIELD '( 'Just "usernames", "username" ))
+                 :|: (FIELD :: FIELD '( 'Just "usernames", "username" ))
              )
              (FROM (((selectAllUsers `AS` aliasLeft)
                    `JOIN`

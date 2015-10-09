@@ -51,6 +51,7 @@ supporting classes to determine which fields are in scope.
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 module Database.Relational.PostgreSQL.Simple where
 
@@ -64,6 +65,7 @@ import Data.Functor.Identity
 import Data.Proxy
 import Data.String (fromString, IsString)
 import Data.List (intersperse)
+import Data.List.NonEmpty hiding (intersperse)
 import Data.Monoid
 import Types.Subset
 import Types.Unique
@@ -121,9 +123,12 @@ import Database.Relational.Default
 import Database.Relational.Set
 import Database.Relational.Order
 import Database.Relational.Interpretation
+import Database.Relational.Coerce
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
+import Database.PostgreSQL.Simple.ToRow
+import Database.PostgreSQL.Simple.FromRow
 import qualified Database.PostgreSQL.Simple.Types as PT (Default(..))
 import Data.UUID (UUID)
 import qualified Data.Text as T
@@ -240,6 +245,37 @@ class PostgreSQLValue exts (env :: [(Maybe Symbol, Symbol, *)]) v where
 instance PostgreSQLValue exts env (FIELD '(prefix, suffix)) where
     type PostgreSQLValueType exts env (FIELD '(prefix, suffix)) =
         PostgreSQLEnvironmentLookup env '(prefix, suffix)
+
+instance
+    ( PostgreSQLValue exts env thing
+    ) => PostgreSQLValue exts env (AS thing alias)
+  where
+    type PostgreSQLValueType exts env (AS thing alias) =
+        PostgreSQLValueType exts env thing
+
+instance
+    ( PostgreSQLValue exts env v1
+    , PostgreSQLValue exts env v2
+    ) => PostgreSQLValue exts env (v1, v2)
+  where
+    type PostgreSQLValueType exts env (v1, v2) = (
+          PostgreSQLValueType exts env v1
+        , PostgreSQLValueType exts env v2
+        )
+
+instance
+    ( PostgreSQLValue exts env v1
+    , PostgreSQLValue exts env v2
+    , PostgreSQLValue exts env v3
+    ) => PostgreSQLValue exts env (v1, v2, v3)
+  where
+    type PostgreSQLValueType exts env (v1, v2, v3) = (
+          PostgreSQLValueType exts env v1
+        , PostgreSQLValueType exts env v2
+        , PostgreSQLValueType exts env v3
+        )
+
+
 
 type family PostgreSQLEnvironmentLookup (env :: [(Maybe Symbol, Symbol, *)]) (v :: (Maybe Symbol, Symbol)) :: * where
     PostgreSQLEnvironmentLookup ( '(prefix, suffix, ty) ': rest ) '(prefix, suffix) = ty
@@ -1031,28 +1067,108 @@ instance
     postgreSQLQueryParameters _ term = case term of
         SET (DEFAULT x) -> Only x
 
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts term m
+    , PostgreSQLType ty
+    ) => PostgreSQLMakeQuery exts (term ::: ty) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        term ::: proxy -> mconcat [
+              postgreSQLMakeQuery exts term
+            , fromString "::"
+            , fromString (postgreSQLTypeId proxy)
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts term
+    ) => PostgreSQLQueryParameters exts (term ::: ty)
+  where
+    type PostgreSQLQueryParametersType exts (term ::: ty) =
+        PostgreSQLQueryParametersType exts term
+    postgreSQLQueryParameters exts term = case term of
+        term ::: ty -> postgreSQLQueryParameters exts term
+
 -- | A VALUES is always followed by parens.
 instance
     ( Monoid m
     , IsString m
-    , PostgreSQLMakeQuery exts values m
-    ) => PostgreSQLMakeQuery exts (VALUES values) m
+    , PostgreSQLMakeQuery exts t m
+    ) => PostgreSQLMakeQuery exts (VALUES (NonEmpty t)) m
   where
     postgreSQLMakeQuery exts term = case term of
         VALUES values -> mconcat [
               fromString "VALUES ("
-            , postgreSQLMakeQuery exts values
+            , mconcat . intersperse (fromString "), (") . fmap (postgreSQLMakeQuery exts) . toList $ values
             , fromString ")"
             ]
 
 instance
-    ( PostgreSQLQueryParameters exts values
-    ) => PostgreSQLQueryParameters exts (VALUES values)
+    ( PostgreSQLValue exts env t
+    ) => PostgreSQLValue exts env (VALUES (NonEmpty t))
   where
-    type PostgreSQLQueryParametersType exts (VALUES values) =
-        PostgreSQLQueryParametersType exts values
+    type PostgreSQLValueType exts env (VALUES (NonEmpty t)) =
+        NonEmpty (PostgreSQLValueType exts env t)
+
+-- | Similar to :. but for arbitrarily many homogeneous terms.
+newtype ManyToRow t = ManyToRow {
+      manyToRow :: [t]
+    } deriving (Functor)
+
+instance ToRow t => ToRow (ManyToRow t) where
+    toRow term = case term of
+        ManyToRow ts -> concat (fmap toRow ts)
+
+instance
+    ( PostgreSQLQueryParameters exts t
+    ) => PostgreSQLQueryParameters exts (VALUES (NonEmpty t))
+  where
+    type PostgreSQLQueryParametersType exts (VALUES (NonEmpty t)) =
+        ManyToRow (PostgreSQLQueryParametersType exts t)
     postgreSQLQueryParameters exts term = case term of
-        VALUES values -> postgreSQLQueryParameters exts values
+        VALUES nonempty -> ManyToRow (fmap (postgreSQLQueryParameters exts) (toList nonempty))
+
+
+instance
+    ( PostgreSQLValue exts env left
+    , PostgreSQLValue exts env right
+    ) => PostgreSQLValue exts env (IN left right)
+  where
+    type PostgreSQLValueType exts env (IN left right) =
+        PostgreSQLValueTypeIn (PostgreSQLValueType exts env left) (PostgreSQLValueType exts env right)
+
+type family PostgreSQLValueTypeIn left right where
+    PostgreSQLValueTypeIn t (NonEmpty t) = Bool
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts left m
+    , PostgreSQLMakeQuery exts right m
+    ) => PostgreSQLMakeQuery exts (IN left right) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        IN left right -> mconcat [
+              fromString "("
+            , postgreSQLMakeQuery exts left
+            , fromString ") IN ("
+            , postgreSQLMakeQuery exts right
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts left
+    , PostgreSQLQueryParameters exts right
+    ) => PostgreSQLQueryParameters exts (IN left right)
+  where
+    type PostgreSQLQueryParametersType exts (IN left right) =
+           PostgreSQLQueryParametersType exts left
+        :. PostgreSQLQueryParametersType exts right
+    postgreSQLQueryParameters exts term = case term of
+        IN left right ->
+               postgreSQLQueryParameters exts left
+            :. postgreSQLQueryParameters exts right
 
 instance
     ( Monoid m
@@ -1551,9 +1667,11 @@ instance
   where
     postgreSQLMakeQuery exts term = case term of
         left :=: right -> mconcat [
-              postgreSQLMakeQuery exts left
-            , fromString " = "
+              fromString "("
+            , postgreSQLMakeQuery exts left
+            , fromString ") = ("
             , postgreSQLMakeQuery exts right
+            , fromString ")"
             ]
 
 instance
@@ -1568,6 +1686,145 @@ instance
         left :=: right ->
                postgreSQLQueryParameters exts left
             :. postgreSQLQueryParameters exts right
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts left m
+    , PostgreSQLMakeQuery exts right m
+    ) => PostgreSQLMakeQuery exts (left :<: right) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        left :<: right -> mconcat [
+              fromString "("
+            , postgreSQLMakeQuery exts left
+            , fromString ") < ("
+            , postgreSQLMakeQuery exts right
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts left
+    , PostgreSQLQueryParameters exts right
+    ) => PostgreSQLQueryParameters exts (left :<: right)
+  where
+    type PostgreSQLQueryParametersType exts (left :<: right) =
+           PostgreSQLQueryParametersType exts left
+        :. PostgreSQLQueryParametersType exts right
+    postgreSQLQueryParameters exts term = case term of
+        left :<: right ->
+               postgreSQLQueryParameters exts left
+            :. postgreSQLQueryParameters exts right
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts left m
+    , PostgreSQLMakeQuery exts right m
+    ) => PostgreSQLMakeQuery exts (left :>: right) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        left :>: right -> mconcat [
+              fromString "("
+            , postgreSQLMakeQuery exts left
+            , fromString ") > ("
+            , postgreSQLMakeQuery exts right
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts left
+    , PostgreSQLQueryParameters exts right
+    ) => PostgreSQLQueryParameters exts (left :>: right)
+  where
+    type PostgreSQLQueryParametersType exts (left :>: right) =
+           PostgreSQLQueryParametersType exts left
+        :. PostgreSQLQueryParametersType exts right
+    postgreSQLQueryParameters exts term = case term of
+        left :>: right ->
+               postgreSQLQueryParameters exts left
+            :. postgreSQLQueryParameters exts right
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts term m
+    ) => PostgreSQLMakeQuery exts (NOT term) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        NOT subterm -> mconcat [
+              fromString "NOT ("
+            , postgreSQLMakeQuery exts subterm
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts term
+    ) => PostgreSQLQueryParameters exts (NOT term)
+  where
+    type PostgreSQLQueryParametersType exts (NOT term) =
+           PostgreSQLQueryParametersType exts term
+    postgreSQLQueryParameters exts term = case term of
+        NOT subterm -> postgreSQLQueryParameters exts subterm
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts left m
+    , PostgreSQLMakeQuery exts right m
+    ) => PostgreSQLMakeQuery exts (AND left right) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        AND left right -> mconcat [
+              fromString "("
+            , postgreSQLMakeQuery exts left
+            , fromString ") AND ("
+            , postgreSQLMakeQuery exts right
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts left
+    , PostgreSQLQueryParameters exts right
+    ) => PostgreSQLQueryParameters exts (AND left right)
+  where
+    type PostgreSQLQueryParametersType exts (AND left right) =
+           PostgreSQLQueryParametersType exts left
+        :. PostgreSQLQueryParametersType exts right
+    postgreSQLQueryParameters exts term = case term of
+        AND left right ->
+               postgreSQLQueryParameters exts left
+            :. postgreSQLQueryParameters exts right
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts left m
+    , PostgreSQLMakeQuery exts right m
+    ) => PostgreSQLMakeQuery exts (OR left right) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        OR left right -> mconcat [
+              fromString "("
+            , postgreSQLMakeQuery exts left
+            , fromString ") OR ("
+            , postgreSQLMakeQuery exts right
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts left
+    , PostgreSQLQueryParameters exts right
+    ) => PostgreSQLQueryParameters exts (OR left right)
+  where
+    type PostgreSQLQueryParametersType exts (OR left right) =
+           PostgreSQLQueryParametersType exts left
+        :. PostgreSQLQueryParametersType exts right
+    postgreSQLQueryParameters exts term = case term of
+        OR left right ->
+               postgreSQLQueryParameters exts left
+            :. postgreSQLQueryParameters exts right
+
 
 
 instance
@@ -1603,10 +1860,10 @@ instance
     , IsString m
     , PostgreSQLMakeQuery exts p m
     , PostgreSQLMakeQuery exts ps m
-    ) => PostgreSQLMakeQuery exts (p :| ps) m
+    ) => PostgreSQLMakeQuery exts (p :|: ps) m
   where
     postgreSQLMakeQuery exts term = case term of
-        p :| ps -> mconcat [
+        p :|: ps -> mconcat [
               postgreSQLMakeQuery exts p
             , fromString ", "
             , postgreSQLMakeQuery exts ps
@@ -1615,13 +1872,13 @@ instance
 instance
     ( PostgreSQLQueryParameters exts p
     , PostgreSQLQueryParameters exts ps
-    ) => PostgreSQLQueryParameters exts (p :| ps)
+    ) => PostgreSQLQueryParameters exts (p :|: ps)
   where
-    type PostgreSQLQueryParametersType exts (p :| ps) =
+    type PostgreSQLQueryParametersType exts (p :|: ps) =
            PostgreSQLQueryParametersType exts p
         :. PostgreSQLQueryParametersType exts ps
     postgreSQLQueryParameters exts term = case term of
-        p :| ps ->
+        p :|: ps ->
                postgreSQLQueryParameters exts p
             :. postgreSQLQueryParameters exts ps
 
@@ -1744,10 +2001,24 @@ instance
     postgreSQLMakeQuery _ _ = fromString "ASC"
 
 instance
+    (
+    ) => PostgreSQLQueryParameters exts ASCENDING
+  where
+    type PostgreSQLQueryParametersType exts ASCENDING = ()
+    postgreSQLQueryParameters _ _ = ()
+
+instance
     ( IsString m
     ) => PostgreSQLMakeQuery exts DESCENDING m
   where
     postgreSQLMakeQuery _ _ = fromString "DESC"
+
+instance
+    (
+    ) => PostgreSQLQueryParameters exts DESCENDING
+  where
+    type PostgreSQLQueryParametersType exts DESCENDING = ()
+    postgreSQLQueryParameters _ _ = ()
 
 instance
     ( IsString m
@@ -1772,7 +2043,7 @@ instance
         ORDER_BY term clause -> mconcat [
               postgreSQLMakeQuery exts term
             , fromString " ORDER BY "
-            , mconcat . intersperse (fromString ", ") $ postgreSQLMakeOrderByClauses exts clause
+            , postgreSQLMakeOrderByClauses exts clause
             ]
 
 instance
@@ -1788,40 +2059,31 @@ instance
                postgreSQLQueryParameters exts term
             :. postgreSQLQueryParameters exts clause
 
+-- TODO order by clauses are extended via AND, not tuples.
 class
     (
     ) => PostgreSQLMakeOrderByClauses exts term m
   where
-    postgreSQLMakeOrderByClauses :: Proxy exts -> term -> [m]
+    postgreSQLMakeOrderByClauses :: Proxy exts -> term -> m
 
 instance {-# OVERLAPS #-}
     ( PostgreSQLMakeOrderByClause exts term m
     ) => PostgreSQLMakeOrderByClauses exts term m
   where
-    postgreSQLMakeOrderByClauses exts term = [postgreSQLMakeOrderByClause exts term]
+    postgreSQLMakeOrderByClauses exts term = postgreSQLMakeOrderByClause exts term
 
 instance {-# OVERLAPS #-}
-    ( PostgreSQLMakeOrderByClause exts ob1 m
-    , PostgreSQLMakeOrderByClause exts ob2 m
-    ) => PostgreSQLMakeOrderByClauses exts (ob1, ob2) m
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeOrderByClause exts ob1 m
+    , PostgreSQLMakeOrderByClauses exts ob2 m
+    ) => PostgreSQLMakeOrderByClauses exts (AND ob1 ob2) m
   where
     postgreSQLMakeOrderByClauses exts term = case term of
-        (ob1, ob2) -> [
+        AND ob1 ob2 -> mconcat [
               postgreSQLMakeOrderByClause exts ob1
-            , postgreSQLMakeOrderByClause exts ob2
-            ]
-
-instance {-# OVERLAPS #-}
-    ( PostgreSQLMakeOrderByClause exts ob1 m
-    , PostgreSQLMakeOrderByClause exts ob2 m
-    , PostgreSQLMakeOrderByClause exts ob3 m
-    ) => PostgreSQLMakeOrderByClauses exts (ob1, ob2, ob3) m
-  where
-    postgreSQLMakeOrderByClauses exts term = case term of
-        (ob1, ob2, ob3) -> [
-              postgreSQLMakeOrderByClause exts ob1
-            , postgreSQLMakeOrderByClause exts ob2
-            , postgreSQLMakeOrderByClause exts ob3
+            , fromString ", "
+            , postgreSQLMakeOrderByClauses exts ob2
             ]
 
 class
@@ -1878,7 +2140,7 @@ instance
         GROUP_BY term clause -> mconcat [
               postgreSQLMakeQuery exts term
             , fromString " GROUP BY "
-            , mconcat . intersperse (fromString ", ") $ postgreSQLMakeGroupByClauses exts clause
+            , postgreSQLMakeGroupByClauses exts clause
             ]
 
 instance
@@ -1898,37 +2160,72 @@ class
     (
     ) => PostgreSQLMakeGroupByClauses exts term m
   where
-    postgreSQLMakeGroupByClauses :: Proxy exts -> term -> [m]
+    postgreSQLMakeGroupByClauses :: Proxy exts -> term -> m
 
 instance {-# OVERLAPS #-}
     ( PostgreSQLMakeQuery exts term m
     ) => PostgreSQLMakeGroupByClauses exts term m
   where
-    postgreSQLMakeGroupByClauses exts term = [postgreSQLMakeQuery exts term]
+    postgreSQLMakeGroupByClauses exts term = postgreSQLMakeQuery exts term
 
 instance {-# OVERLAPS #-}
-    ( PostgreSQLMakeQuery exts gb1 m
-    , PostgreSQLMakeQuery exts gb2 m
-    ) => PostgreSQLMakeGroupByClauses exts (gb1, gb2) m
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts gb1 m
+    , PostgreSQLMakeGroupByClauses exts gb2 m
+    ) => PostgreSQLMakeGroupByClauses exts (AND gb1 gb2) m
   where
     postgreSQLMakeGroupByClauses exts term = case term of
-        (gb1, gb2) -> [
+        AND gb1 gb2 -> mconcat [
               postgreSQLMakeQuery exts gb1
-            , postgreSQLMakeQuery exts gb2
+            , fromString ", "
+            , postgreSQLMakeGroupByClauses exts gb2
             ]
 
-instance {-# OVERLAPS #-}
-    ( PostgreSQLMakeQuery exts gb1 m
-    , PostgreSQLMakeQuery exts gb2 m
-    , PostgreSQLMakeQuery exts gb3 m
-    ) => PostgreSQLMakeGroupByClauses exts (gb1, gb2, gb3) m
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts term m
+    ) => PostgreSQLMakeQuery exts (OFFSET term) m
   where
-    postgreSQLMakeGroupByClauses exts term = case term of
-        (gb1, gb2, gb3) -> [
-              postgreSQLMakeQuery exts gb1
-            , postgreSQLMakeQuery exts gb2
-            , postgreSQLMakeQuery exts gb3
+    postgreSQLMakeQuery exts term = case term of
+        OFFSET term (SomeNat natProxy) -> mconcat [
+              postgreSQLMakeQuery exts term
+            , fromString " OFFSET "
+            , fromString (show (natVal natProxy))
             ]
+
+instance
+    ( PostgreSQLQueryParameters exts term
+    ) => PostgreSQLQueryParameters exts (OFFSET term)
+  where
+    type PostgreSQLQueryParametersType exts (OFFSET term) =
+        PostgreSQLQueryParametersType exts term
+    postgreSQLQueryParameters exts term = case term of
+        OFFSET term _ -> postgreSQLQueryParameters exts term
+
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts term m
+    ) => PostgreSQLMakeQuery exts (LIMIT term) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        LIMIT term (SomeNat natProxy) -> mconcat [
+              postgreSQLMakeQuery exts term
+            , fromString " LIMIT "
+            , fromString (show (natVal natProxy))
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts term
+    ) => PostgreSQLQueryParameters exts (LIMIT term)
+  where
+    type PostgreSQLQueryParametersType exts (LIMIT term) =
+        PostgreSQLQueryParametersType exts term
+    postgreSQLQueryParameters exts term = case term of
+        LIMIT term _ -> postgreSQLQueryParameters exts term
 
 
 -- | A class to characterize the output of a standalone query.
@@ -2099,6 +2396,41 @@ instance
             (PostgreSQLEnvironmentType exts left)
             (PostgreSQLEnvironmentType exts right)
 
+instance
+    ( PostgreSQLEnvironment exts term
+    ) => PostgreSQLEnvironment exts (WHERE term restriction)
+  where
+    type PostgreSQLEnvironmentType exts (WHERE term restriction) =
+        PostgreSQLEnvironmentType exts term
+
+instance
+    ( PostgreSQLEnvironment exts term
+    ) => PostgreSQLEnvironment exts (GROUP_BY term group)
+  where
+    type PostgreSQLEnvironmentType exts (GROUP_BY term group) =
+        PostgreSQLEnvironmentType exts term
+
+instance
+    ( PostgreSQLEnvironment exts term
+    ) => PostgreSQLEnvironment exts (ORDER_BY term order)
+  where
+    type PostgreSQLEnvironmentType exts (ORDER_BY term order) =
+        PostgreSQLEnvironmentType exts term
+
+instance
+    ( PostgreSQLEnvironment exts term
+    ) => PostgreSQLEnvironment exts (LIMIT term)
+  where
+    type PostgreSQLEnvironmentType exts (LIMIT term) =
+        PostgreSQLEnvironmentType exts term
+
+instance
+    ( PostgreSQLEnvironment exts term
+    ) => PostgreSQLEnvironment exts (OFFSET term)
+  where
+    type PostgreSQLEnvironmentType exts (OFFSET term) =
+        PostgreSQLEnvironmentType exts term
+
 -- | Class to characterize the types which come out of a projection.
 class
     (
@@ -2112,7 +2444,7 @@ instance
     type PostgreSQLProjectTypesType exts env p =
         PostgreSQLProjectTypesType_ (ProjectConstructorIndicator p) exts env p
 type family ProjectConstructorIndicator p :: Bool where
-    ProjectConstructorIndicator (p :| ps) = True
+    ProjectConstructorIndicator (p :|: ps) = True
     ProjectConstructorIndicator p = False
 class
     (
@@ -2127,9 +2459,9 @@ instance
 instance
     ( PostgreSQLValue exts env p
     , PostgreSQLProjectTypes_ (ProjectConstructorIndicator ps) exts env ps
-    ) => PostgreSQLProjectTypes_ True exts env (p :| ps)
+    ) => PostgreSQLProjectTypes_ True exts env (p :|: ps)
   where
-    type PostgreSQLProjectTypesType_ True exts env (p :| ps) =
+    type PostgreSQLProjectTypesType_ True exts env (p :|: ps) =
            PostgreSQLValueType exts env p
         ': PostgreSQLProjectTypesType_ (ProjectConstructorIndicator ps) exts env ps
 
@@ -2146,21 +2478,21 @@ instance
     type PostgreSQLProjectNamesType exts env (FIELD '(prefix, suffix)) = '[suffix]
 instance
     (
-    ) => PostgreSQLProjectNames exts env ((FIELD '(prefix, suffix) :| ps))
+    ) => PostgreSQLProjectNames exts env ((FIELD '(prefix, suffix) :|: ps))
   where
-    type PostgreSQLProjectNamesType exts env ((FIELD '(prefix, suffix)) :| ps) =
+    type PostgreSQLProjectNamesType exts env ((FIELD '(prefix, suffix)) :|: ps) =
            suffix
         ': PostgreSQLProjectNamesType exts env ps
 instance
     (
-    ) => PostgreSQLProjectNames exts env (AS left name)
+    ) => PostgreSQLProjectNames exts env (AS left (NAME name))
   where
-    type PostgreSQLProjectNamesType exts env (AS left name) = '[name]
+    type PostgreSQLProjectNamesType exts env (AS left (NAME name)) = '[name]
 instance
     (
-    ) => PostgreSQLProjectNames exts env ((AS left name) :| ps)
+    ) => PostgreSQLProjectNames exts env ((AS left name) :|: ps)
   where
-    type PostgreSQLProjectNamesType exts env ((AS left name) :| ps) =
+    type PostgreSQLProjectNamesType exts env ((AS left name) :|: ps) =
            name
         ': PostgreSQLProjectNamesType exts env ps
 
@@ -2262,6 +2594,14 @@ instance PGRow () where
     type PGRowType () = ()
     pgRowIn = id
     pgRowOut = id
+instance PGRow t => PGRow [t] where
+    type PGRowType [t] = [PGRowType t]
+    pgRowIn = fmap pgRowIn
+    pgRowOut = fmap pgRowOut
+instance PGRow t => PGRow (ManyToRow t) where
+    type PGRowType (ManyToRow t) = ManyToRow (PGRowType t)
+    pgRowIn = fmap pgRowIn
+    pgRowOut = fmap pgRowOut
 instance PGRow (Only t) where
     type PGRowType (Only t) = (Only t)
     pgRowIn = id

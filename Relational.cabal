@@ -66,6 +66,7 @@ library
                      , Database.Relational.Equal
                      , Database.Relational.GreaterThan
                      , Database.Relational.LessThan
+                     , Database.Relational.Coerce
                      , Database.Relational
                      , Types.BooleanLogic
                      , Types.Member
@@ -81,6 +82,7 @@ library
                      -- TODO move these to their own packages.
                      , Database.Relational.PostgreSQL.Simple
                      , Database.Relational.PostgreSQL.PostGIS.Simple
+                     , Database.Relational.PostgreSQL.Trigram.Simple
   -- other-modules:       
   other-extensions:    AutoDeriveTypeable
                      , DataKinds
@@ -114,6 +116,7 @@ library
                      , transformers
                      , attoparsec
                      , aeson
+                     , semigroups
 
   
   -- hs-source-dirs:      

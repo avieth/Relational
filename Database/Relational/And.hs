@@ -20,5 +20,5 @@ module Database.Relational.And (
 
 data AND left right = AND left right
 
-infixl 1 :&&:
+infixr 3 :&&:
 pattern left :&&: right = AND left right

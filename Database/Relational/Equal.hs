@@ -27,9 +27,9 @@ import Database.Relational.Not
 data EQUAL left right = EQUAL left right
 
 type left :=: right = EQUAL left right
-infixr 1 :=:
+infix 4 :=:
 pattern left :=: right = EQUAL left right
 
 type left :<>: right = NOT (EQUAL left right)
-infixr 1 :<>:
+infix 4 :<>:
 pattern left :<>: right = NOT (left :=: right)

@@ -181,3 +181,9 @@ an interpreter for Relational terms: one which guarantees that
       - Clashing aliases in joins.
       - Ill-typed function calls (like AVG on a boolean column).
       - etc.
+
+### TODO list
+
+  - Extensible schema definition. Instead of fixing it to include columns,
+    primary key, foreign keys, unique, etc., let it be a `[*]` which can be
+    filled with terms like `PRIMARY_KEY`, `UNIQUE`, `INDEX`, etc.

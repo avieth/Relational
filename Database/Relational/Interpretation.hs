@@ -467,12 +467,6 @@ instance
 class MakeProjectClauses universe project m where
     makeProjectClauses :: universe -> Proxy project -> [m]
 
-instance
-    (
-    ) => MakeProjectClauses universe P m
-  where
-    makeProjectClauses _ _ = []
-
 class
     (
     ) => MakeColumnsClauses universe columns m
@@ -1190,10 +1184,6 @@ class Projection universe term where
     -- Observable form of the projection; the things we can pick from
     -- it.
     type ProjectionObservable universe term :: [(Symbol, *)]
-
-instance Projection universe P where
-    type ProjectionObserved universe P = '[]
-    type ProjectionObservable universe P = '[]
 
 instance
     ( Projection universe prj

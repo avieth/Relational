@@ -23,5 +23,5 @@ module Database.Relational.GreaterThan (
 data GREATER_THAN left right = GREATER_THAN left right
 
 type left :>: right = GREATER_THAN left right
-infixr 1 :>:
+infix 4 :>:
 pattern left :>: right = GREATER_THAN left right

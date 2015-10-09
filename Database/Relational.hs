@@ -59,6 +59,7 @@ module Database.Relational (
       , module Database.Relational.Equal
       , module Database.Relational.GreaterThan
       , module Database.Relational.LessThan
+      , module Database.Relational.Coerce
 
     ) where
 
@@ -111,3 +112,4 @@ import Database.Relational.In
 import Database.Relational.Equal
 import Database.Relational.GreaterThan
 import Database.Relational.LessThan
+import Database.Relational.Coerce

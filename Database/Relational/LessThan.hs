@@ -23,5 +23,5 @@ module Database.Relational.LessThan (
 data LESS_THAN left right = LESS_THAN left right
 
 type left :<: right = LESS_THAN left right
-infixr 1 :<:
+infix 4 :<:
 pattern left :<: right = LESS_THAN left right

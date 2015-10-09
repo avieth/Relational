@@ -656,6 +656,74 @@ instance
                postgreSQLQueryParameters exts left
             :. postgreSQLQueryParameters exts right
 
+data ST_Distance term = ST_Distance term
+
+instance PostgreSQLEntity (ST_Distance) where
+    type PostgreSQLEntityExtension ST_Distance = Just PostGIS
+
+type family PostgreSQLValueSTDistance term where
+    PostgreSQLValueSTDistance (PGGeometry, PGGeometry) = PGDouble
+    PostgreSQLValueSTDistance (PGGeography, PGGeography) = PGDouble
+    -- These two are not in line with the spec! HOWEVER! I cannot figure out
+    -- how the hell to create a geography point using PostGIS. Must I manually
+    -- set the SRID or something? I have these two clauses here so that I can
+    -- go ahead with some example applications... it seems PostGIS will
+    -- automatically cast an ST_MakePoint(x, y) to geography if necessary...
+    PostgreSQLValueSTDistance (PGGeography, PGGeometry) = PGDouble
+    PostgreSQLValueSTDistance (PGGeometry, PGGeography) = PGDouble
+    PostgreSQLValueSTDistance (PGGeography, PGGeography, PGBool) = PGDouble
+instance
+    ( PostgreSQLUsableEntity exts (ST_Distance)
+    , PostgreSQLValue exts env term
+    ) => PostgreSQLValue exts env (ST_Distance term)
+  where
+    type PostgreSQLValueType exts env (ST_Distance term) =
+        PostgreSQLValueSTDistance (PostgreSQLValueType exts env term)
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts x m
+    , PostgreSQLMakeQuery exts y m
+    ) => PostgreSQLMakeQuery exts (ST_Distance (x, y)) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        ST_Distance (x, y) -> mconcat [
+              fromString "ST_Distance("
+            , postgreSQLMakeQuery exts x
+            , fromString ", "
+            , postgreSQLMakeQuery exts y
+            , fromString ")"
+            ]
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts x m
+    , PostgreSQLMakeQuery exts y m
+    , PostgreSQLMakeQuery exts b m
+    ) => PostgreSQLMakeQuery exts (ST_Distance (x, y, b)) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        ST_Distance (x, y, b) -> mconcat [
+              fromString "ST_Distance("
+            , postgreSQLMakeQuery exts x
+            , fromString ", "
+            , postgreSQLMakeQuery exts y
+            , fromString ", "
+            , postgreSQLMakeQuery exts b
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts term
+    ) => PostgreSQLQueryParameters exts (ST_Distance term)
+  where
+    type PostgreSQLQueryParametersType exts (ST_Distance term) =
+        PostgreSQLQueryParametersType exts term
+    postgreSQLQueryParameters exts term = case term of
+        ST_Distance subterm -> postgreSQLQueryParameters exts subterm
+
 -- NB A note on corecion. We cannot in general do resolve automatic coercion.
 -- Suppose we know the argument types for an overloaded function. What if
 -- at least one of the argument types is coercible to fit multiple signatures?
