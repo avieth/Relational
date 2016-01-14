@@ -493,7 +493,7 @@ instance PostgreSQLQueryParameters exts PGZonedTimestamp where
     postgreSQLQueryParameters _ = Only
 
 newtype PGJSON = PGJSON {
-      pgJson :: Data.Aeson.Types.Value
+      pgJSON :: Data.Aeson.Types.Value
     } deriving (Show, FromField, ToField)
 
 instance PostgreSQLEntity PGJSON where
@@ -847,6 +847,21 @@ instance
 -- |
 -- = Generating queries
 
+-- Maybe represents a possibly null value.
+instance
+    ( IsString m
+    ) => PostgreSQLMakeQuery exts (Maybe t) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        _ -> fromString "?"
+
+instance
+    (
+    ) => PostgreSQLQueryParameters exts (Maybe t)
+  where
+    type PostgreSQLQueryParametersType exts (Maybe t) = Only (Maybe t)
+    postgreSQLQueryParameters exts = Only
+
 -- TBD since this is (I think) ANSI SQL, can/should we abstract it?
 instance
     ( Monoid m
@@ -1068,6 +1083,13 @@ instance
         SET (DEFAULT x) -> Only x
 
 instance
+    ( PostgreSQLValue exts env term
+    , PostgreSQLCoercible (PostgreSQLValueType exts env term) ty
+    ) => PostgreSQLValue exts env (term ::: ty)
+  where
+    type PostgreSQLValueType exts env (term ::: ty) = ty
+
+instance
     ( Monoid m
     , IsString m
     , PostgreSQLMakeQuery exts term m
@@ -1089,6 +1111,159 @@ instance
         PostgreSQLQueryParametersType exts term
     postgreSQLQueryParameters exts term = case term of
         term ::: ty -> postgreSQLQueryParameters exts term
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts v1 m
+    , PostgreSQLMakeQuery exts v2 m
+    ) => PostgreSQLMakeQuery exts (VALUES (v1, v2)) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        VALUES (v1, v2) -> mconcat [
+              fromString "VALUES ("
+            , postgreSQLMakeQuery exts v1
+            , fromString ", "
+            , postgreSQLMakeQuery exts v2
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts v1
+    , PostgreSQLQueryParameters exts v2
+    ) => PostgreSQLQueryParameters exts (VALUES (v1, v2))
+  where
+    type PostgreSQLQueryParametersType exts (VALUES (v1, v2)) =
+           PostgreSQLQueryParametersType exts v1
+        :. PostgreSQLQueryParametersType exts v2
+    postgreSQLQueryParameters exts term = case term of
+        VALUES (v1, v2) ->
+               postgreSQLQueryParameters exts v1
+            :. postgreSQLQueryParameters exts v2
+
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts v1 m
+    , PostgreSQLMakeQuery exts v2 m
+    , PostgreSQLMakeQuery exts v3 m
+    ) => PostgreSQLMakeQuery exts (VALUES (v1, v2, v3)) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        VALUES (v1, v2, v3) -> mconcat [
+              fromString "VALUES ("
+            , postgreSQLMakeQuery exts v1
+            , fromString ", "
+            , postgreSQLMakeQuery exts v2
+            , fromString ", "
+            , postgreSQLMakeQuery exts v3
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts v1
+    , PostgreSQLQueryParameters exts v2
+    , PostgreSQLQueryParameters exts v3
+    ) => PostgreSQLQueryParameters exts (VALUES (v1, v2, v3))
+  where
+    type PostgreSQLQueryParametersType exts (VALUES (v1, v2, v3)) =
+           PostgreSQLQueryParametersType exts v1
+        :. PostgreSQLQueryParametersType exts v2
+        :. PostgreSQLQueryParametersType exts v3
+    postgreSQLQueryParameters exts term = case term of
+        VALUES (v1, v2, v3) ->
+               postgreSQLQueryParameters exts v1
+            :. postgreSQLQueryParameters exts v2
+            :. postgreSQLQueryParameters exts v3
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts v1 m
+    , PostgreSQLMakeQuery exts v2 m
+    , PostgreSQLMakeQuery exts v3 m
+    , PostgreSQLMakeQuery exts v4 m
+    ) => PostgreSQLMakeQuery exts (VALUES (v1, v2, v3, v4)) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        VALUES (v1, v2, v3, v4) -> mconcat [
+              fromString "VALUES ("
+            , postgreSQLMakeQuery exts v1
+            , fromString ", "
+            , postgreSQLMakeQuery exts v2
+            , fromString ", "
+            , postgreSQLMakeQuery exts v3
+            , fromString ", "
+            , postgreSQLMakeQuery exts v4
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts v1
+    , PostgreSQLQueryParameters exts v2
+    , PostgreSQLQueryParameters exts v3
+    , PostgreSQLQueryParameters exts v4
+    ) => PostgreSQLQueryParameters exts (VALUES (v1, v2, v3, v4))
+  where
+    type PostgreSQLQueryParametersType exts (VALUES (v1, v2, v3, v4)) =
+           PostgreSQLQueryParametersType exts v1
+        :. PostgreSQLQueryParametersType exts v2
+        :. PostgreSQLQueryParametersType exts v3
+        :. PostgreSQLQueryParametersType exts v4
+    postgreSQLQueryParameters exts term = case term of
+        VALUES (v1, v2, v3, v4) ->
+               postgreSQLQueryParameters exts v1
+            :. postgreSQLQueryParameters exts v2
+            :. postgreSQLQueryParameters exts v3
+            :. postgreSQLQueryParameters exts v4
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts v1 m
+    , PostgreSQLMakeQuery exts v2 m
+    , PostgreSQLMakeQuery exts v3 m
+    , PostgreSQLMakeQuery exts v4 m
+    , PostgreSQLMakeQuery exts v5 m
+    ) => PostgreSQLMakeQuery exts (VALUES (v1, v2, v3, v4, v5)) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        VALUES (v1, v2, v3, v4, v5) -> mconcat [
+              fromString "VALUES ("
+            , postgreSQLMakeQuery exts v1
+            , fromString ", "
+            , postgreSQLMakeQuery exts v2
+            , fromString ", "
+            , postgreSQLMakeQuery exts v3
+            , fromString ", "
+            , postgreSQLMakeQuery exts v4
+            , fromString ", "
+            , postgreSQLMakeQuery exts v5
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts v1
+    , PostgreSQLQueryParameters exts v2
+    , PostgreSQLQueryParameters exts v3
+    , PostgreSQLQueryParameters exts v4
+    , PostgreSQLQueryParameters exts v5
+    ) => PostgreSQLQueryParameters exts (VALUES (v1, v2, v3, v4, v5))
+  where
+    type PostgreSQLQueryParametersType exts (VALUES (v1, v2, v3, v4, v5)) =
+           PostgreSQLQueryParametersType exts v1
+        :. PostgreSQLQueryParametersType exts v2
+        :. PostgreSQLQueryParametersType exts v3
+        :. PostgreSQLQueryParametersType exts v4
+        :. PostgreSQLQueryParametersType exts v5
+    postgreSQLQueryParameters exts term = case term of
+        VALUES (v1, v2, v3, v4, v5) ->
+               postgreSQLQueryParameters exts v1
+            :. postgreSQLQueryParameters exts v2
+            :. postgreSQLQueryParameters exts v3
+            :. postgreSQLQueryParameters exts v4
+            :. postgreSQLQueryParameters exts v5
 
 -- | A VALUES is always followed by parens.
 instance

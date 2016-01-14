@@ -266,6 +266,8 @@ instance
     type PostgreSQLQueryParametersType exts PGGeography = Only PGGeography
     postgreSQLQueryParameters _ = Only
 
+instance PostgreSQLCoercible PGGeometry PGGeography
+instance PostgreSQLCoercible PGGeography PGGeometry
 
 data ST_MakePoint thing = ST_MakePoint thing
 
@@ -413,7 +415,7 @@ instance
     , PostgreSQLCoercible (PostgreSQLValueType exts env thing) PGGeometry
     ) => PostgreSQLValue exts env (ST_X thing)
   where
-    type PostgreSQLValueType exts env (ST_X thing) = PGReal
+    type PostgreSQLValueType exts env (ST_X thing) = PGDouble
 instance
     ( Monoid m
     , IsString m
@@ -443,7 +445,7 @@ instance
     , PostgreSQLCoercible (PostgreSQLValueType exts env thing) PGGeometry
     ) => PostgreSQLValue exts env (ST_Y thing)
   where
-    type PostgreSQLValueType exts env (ST_Y thing) = PGReal
+    type PostgreSQLValueType exts env (ST_Y thing) = PGDouble
 instance
     ( Monoid m
     , IsString m
@@ -473,7 +475,7 @@ instance
     , PostgreSQLCoercible (PostgreSQLValueType exts env thing) PGGeometry
     ) => PostgreSQLValue exts env (ST_Z thing)
   where
-    type PostgreSQLValueType exts env (ST_Z thing) = PGReal
+    type PostgreSQLValueType exts env (ST_Z thing) = PGDouble
 instance
     ( Monoid m
     , IsString m
@@ -723,6 +725,98 @@ instance
         PostgreSQLQueryParametersType exts term
     postgreSQLQueryParameters exts term = case term of
         ST_Distance subterm -> postgreSQLQueryParameters exts subterm
+
+data ST_MakeBox2D arg = ST_MakeBox2D arg
+
+instance PostgreSQLEntity (ST_MakeBox2D) where
+    type PostgreSQLEntityExtension ST_MakeBox2D = 'Just PostGIS
+
+instance
+    ( PostgreSQLUsableEntity exts (ST_MakeBox2D)
+    , PostgreSQLValue exts env bottomLeft
+    , PostgreSQLValue exts env topRight
+    ) => PostgreSQLValue exts env (ST_MakeBox2D (bottomLeft, topRight))
+  where
+    type PostgreSQLValueType exts env (ST_MakeBox2D (bottomLeft, topRight)) =
+        PostgreSQLValueTypeSTMakeBox2D (PostgreSQLValueType exts env bottomLeft) (PostgreSQLValueType exts env topRight)
+type family PostgreSQLValueTypeSTMakeBox2D bottomLeft topRight where
+    PostgreSQLValueTypeSTMakeBox2D PGGeometry PGGeometry = PGGeometry
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts bottomLeft m
+    , PostgreSQLMakeQuery exts topRight m
+    ) => PostgreSQLMakeQuery exts (ST_MakeBox2D (bottomLeft, topRight)) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        ST_MakeBox2D (bottomLeft, topRight) -> mconcat [
+              fromString "ST_MakeBox2D("
+            , postgreSQLMakeQuery exts bottomLeft
+            , fromString ", "
+            , postgreSQLMakeQuery exts topRight
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts bottomLeft
+    , PostgreSQLQueryParameters exts topRight
+    ) => PostgreSQLQueryParameters exts (ST_MakeBox2D (bottomLeft, topRight))
+  where
+    type PostgreSQLQueryParametersType exts (ST_MakeBox2D (bottomLeft, topRight)) =
+           PostgreSQLQueryParametersType exts bottomLeft
+        :. PostgreSQLQueryParametersType exts topRight
+    postgreSQLQueryParameters exts term = case term of
+        ST_MakeBox2D (bottomLeft, topRight) ->
+               postgreSQLQueryParameters exts bottomLeft
+            :. postgreSQLQueryParameters exts topRight
+
+data ST_Buffer arg = ST_Buffer arg
+
+instance PostgreSQLEntity ST_Buffer where
+    type PostgreSQLEntityExtension ST_Buffer = 'Just PostGIS
+
+instance
+    ( PostgreSQLUsableEntity exts ST_Buffer
+    , PostgreSQLValue exts env thing
+    , PostgreSQLValue exts env distance
+    ) => PostgreSQLValue exts env (ST_Buffer (thing, distance))
+  where
+    type PostgreSQLValueType exts env (ST_Buffer (thing, distance)) =
+        PostgreSQLValueTypeSTBuffer2 (PostgreSQLValueType exts env thing) (PostgreSQLValueType exts env distance)
+
+type family PostgreSQLValueTypeSTBuffer2 thing distance where
+    PostgreSQLValueTypeSTBuffer2 PGGeography PGDouble = PGGeography
+    PostgreSQLValueTypeSTBuffer2 PGGeometry PGDouble = PGGeometry
+
+instance
+    ( Monoid m
+    , IsString m
+    , PostgreSQLMakeQuery exts thing m
+    , PostgreSQLMakeQuery exts distance m
+    ) => PostgreSQLMakeQuery exts (ST_Buffer (thing, distance)) m
+  where
+    postgreSQLMakeQuery exts term = case term of
+        ST_Buffer (thing, distance) -> mconcat [
+              fromString "ST_Buffer("
+            , postgreSQLMakeQuery exts thing
+            , fromString ", "
+            , postgreSQLMakeQuery exts distance
+            , fromString ")"
+            ]
+
+instance
+    ( PostgreSQLQueryParameters exts thing
+    , PostgreSQLQueryParameters exts distance
+    ) => PostgreSQLQueryParameters exts (ST_Buffer (thing, distance))
+  where
+    type PostgreSQLQueryParametersType exts (ST_Buffer (thing, distance)) =
+           PostgreSQLQueryParametersType exts thing
+        :. PostgreSQLQueryParametersType exts distance
+    postgreSQLQueryParameters exts term = case term of
+        ST_Buffer (thing, distance) ->
+               postgreSQLQueryParameters exts thing
+            :. postgreSQLQueryParameters exts distance
 
 -- NB A note on corecion. We cannot in general do resolve automatic coercion.
 -- Suppose we know the argument types for an overloaded function. What if
