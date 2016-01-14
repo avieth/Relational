@@ -14,11 +14,11 @@ Portability : non-portable (GHC only)
 module Database.Relational.And (
 
       AND(..)
-    , pattern (:&&:)
+    , pattern (:&:)
 
     ) where
 
 data AND left right = AND left right
 
-infixr 3 :&&:
-pattern left :&&: right = AND left right
+infixr 3 :&:
+pattern left :&: right = AND left right
